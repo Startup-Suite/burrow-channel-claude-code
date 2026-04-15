@@ -75,12 +75,27 @@ Until this plugin is submitted and approved, use the development flag:
 | Reply (text)              | ✅     | `suite_reply` tool                                                    |
 | Reply with media          | ✅     | `suite_reply_with_media` tool, base64 attachments                     |
 | Typing indicator          | ✅     | `suite_typing` tool                                                   |
+| Reply chunks              | ✅     | `suite_reply_chunk` tool — cumulative-text progressive reveal          |
 | Permission relay          | ✅     | Opt-in via `SUITE_ALLOW_PERMISSION_RELAY=1`                           |
 | Presence                  | ✅     | Tracked by Suite via the WebSocket connection                         |
 | Deduped messages          | ✅     | ~1s window to prevent double-delivery                                 |
 | Session spawn by task_id  | ⛔     | Claude Code sessions are user-owned; see "Task-scoped work" below     |
-| Reply chunks (streaming)  | ⏳     | Planned                                                               |
-| Execution events          | ⏳     | Planned                                                               |
+| Execution events          | ⏳     | Planned (issue #3)                                                    |
+
+## Reply chunking
+
+Claude Code channel plugins can't observe Claude's raw token stream — only
+tool calls. For long replies that benefit from progressive reveal in Suite,
+Claude should call `suite_reply_chunk` several times with a stable `chunk_id`,
+passing the **cumulative** text each time and `done:true` on the final call.
+
+Short answers should keep using `suite_reply`. Chunking is for the kind of
+multi-paragraph response where a single atomic drop feels jarring.
+
+**Persistence:** Suite's `reply_chunk` is ephemeral (PubSub broadcast for the
+LiveView UI; not persisted). The plugin's tool handler auto-fires a `reply`
+on the final `done:true` chunk so the message lands in space history. Claude
+only needs the one tool.
 
 ## Task-scoped work
 
