@@ -25,6 +25,13 @@ plugin uses. No new credentials.
 Research preview. Requires Claude Code v2.1.80+ and claude.ai login (API-key
 auth is not supported for channels).
 
+## Running as an autonomous worker
+
+For task-execution lanes (plan → execute → review → deploy) you want Claude
+running unattended. See [`docker/README.md`](./docker/README.md) for a
+containerized setup with `--dangerously-skip-permissions`, mounted
+credentials, and GitHub access.
+
 ## Install (development)
 
 Channel plugins need to be on the Anthropic allowlist to run under `--channels`.
