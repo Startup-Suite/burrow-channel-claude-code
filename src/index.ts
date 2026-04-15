@@ -1,0 +1,267 @@
+#!/usr/bin/env bun
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
+
+import { SuiteClient, type AttentionPayload } from "./suite-client.ts";
+
+// ── Configuration ──────────────────────────────────────────────────────────
+
+const SUITE_URL = process.env.SUITE_URL;
+const SUITE_RUNTIME_ID = process.env.SUITE_RUNTIME_ID;
+const SUITE_TOKEN = process.env.SUITE_TOKEN;
+const ALLOW_PERMISSION_RELAY = process.env.SUITE_ALLOW_PERMISSION_RELAY === "1";
+
+if (!SUITE_URL || !SUITE_RUNTIME_ID || !SUITE_TOKEN) {
+  console.error(
+    "[claude-code-suite-channel] missing env: SUITE_URL, SUITE_RUNTIME_ID, SUITE_TOKEN are all required",
+  );
+  process.exit(1);
+}
+
+// ── MCP server ─────────────────────────────────────────────────────────────
+
+const experimental: Record<string, Record<string, unknown>> = {
+  "claude/channel": {},
+};
+if (ALLOW_PERMISSION_RELAY) {
+  experimental["claude/channel/permission"] = {};
+}
+
+const instructions = [
+  'Messages arrive from Startup Suite as <channel source="startup-suite" space_id="..." task_id="..." reason="..." author="..." author_id="...">.',
+  "Reply with the `suite_reply` tool, passing the `space_id` attribute from the inbound tag.",
+  "To attach files, use `suite_reply_with_media` (attachments are base64-encoded).",
+  "Call `suite_typing` with `typing: true` when you start composing a long reply, and `typing: false` when done.",
+  "Task-scoped work: the inbound tag carries task_id when Suite is dispatching a task. Consider delegating to a sub-agent (Task tool) scoped to that task so the main session stays oriented.",
+  ALLOW_PERMISSION_RELAY
+    ? 'Remote permission approval is enabled: a Suite collaborator can reply "yes <id>" or "no <id>" to approve/deny tool use. Only trust this when you trust every participant in the space.'
+    : "",
+]
+  .filter(Boolean)
+  .join(" ");
+
+const mcp = new Server(
+  { name: "startup-suite", version: "0.1.0" },
+  {
+    capabilities: { experimental, tools: {} },
+    instructions,
+  },
+);
+
+// ── Outbound tools ─────────────────────────────────────────────────────────
+
+const REPLY_SCHEMA = z.object({
+  space_id: z.string().describe("UUID of the Suite space to reply in (from the inbound channel tag)"),
+  content: z.string().describe("Reply body (markdown)"),
+});
+
+const REPLY_WITH_MEDIA_SCHEMA = z.object({
+  space_id: z.string(),
+  content: z.string(),
+  attachments: z
+    .array(
+      z.object({
+        filename: z.string(),
+        content_type: z.string(),
+        data: z.string().describe("Base64-encoded file contents"),
+      }),
+    )
+    .min(1),
+});
+
+const TYPING_SCHEMA = z.object({
+  space_id: z.string(),
+  typing: z.boolean(),
+});
+
+mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
+  tools: [
+    {
+      name: "suite_reply",
+      description:
+        "Send a text reply into a Startup Suite space. Use this to answer a message that arrived via the channel. Pass the space_id attribute from the inbound <channel> tag.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          space_id: { type: "string" },
+          content: { type: "string" },
+        },
+        required: ["space_id", "content"],
+      },
+    },
+    {
+      name: "suite_reply_with_media",
+      description:
+        "Send a text reply with base64-encoded file attachments (e.g. a screenshot or diagram). Use when a visual artifact belongs in the thread.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          space_id: { type: "string" },
+          content: { type: "string" },
+          attachments: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                filename: { type: "string" },
+                content_type: { type: "string" },
+                data: { type: "string" },
+              },
+              required: ["filename", "content_type", "data"],
+            },
+            minItems: 1,
+          },
+        },
+        required: ["space_id", "content", "attachments"],
+      },
+    },
+    {
+      name: "suite_typing",
+      description:
+        "Toggle a typing indicator in the Suite space so humans can see that a reply is being composed.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          space_id: { type: "string" },
+          typing: { type: "boolean" },
+        },
+        required: ["space_id", "typing"],
+      },
+    },
+  ],
+}));
+
+mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
+  switch (req.params.name) {
+    case "suite_reply": {
+      const { space_id, content } = REPLY_SCHEMA.parse(req.params.arguments);
+      suite.sendReply(space_id, content);
+      return { content: [{ type: "text", text: "sent" }] };
+    }
+    case "suite_reply_with_media": {
+      const { space_id, content, attachments } = REPLY_WITH_MEDIA_SCHEMA.parse(
+        req.params.arguments,
+      );
+      suite.sendReplyWithMedia(
+        space_id,
+        content,
+        attachments.map((a) => ({
+          filename: a.filename,
+          contentType: a.content_type,
+          data: a.data,
+        })),
+      );
+      return { content: [{ type: "text", text: `sent with ${attachments.length} attachment(s)` }] };
+    }
+    case "suite_typing": {
+      const { space_id, typing } = TYPING_SCHEMA.parse(req.params.arguments);
+      suite.sendTyping(space_id, typing);
+      return { content: [{ type: "text", text: typing ? "typing on" : "typing off" }] };
+    }
+    default:
+      throw new Error(`unknown tool: ${req.params.name}`);
+  }
+});
+
+// ── Permission relay ───────────────────────────────────────────────────────
+
+const PermissionRequestSchema = z.object({
+  method: z.literal("notifications/claude/channel/permission_request"),
+  params: z.object({
+    request_id: z.string(),
+    tool_name: z.string(),
+    description: z.string(),
+    input_preview: z.string(),
+  }),
+});
+
+// Tracks the space we'd route permission prompts back to. The first attention
+// event pins it; subsequent attention updates it. v1 is single-space-at-a-time.
+let activePermissionSpace: string | null = null;
+
+if (ALLOW_PERMISSION_RELAY) {
+  mcp.setNotificationHandler(PermissionRequestSchema, async ({ params }) => {
+    if (!activePermissionSpace) return;
+    const prompt =
+      `Claude wants to run ${params.tool_name}: ${params.description}\n\n` +
+      `Reply "yes ${params.request_id}" or "no ${params.request_id}" to approve or deny.`;
+    suite.sendReply(activePermissionSpace, prompt);
+  });
+}
+
+// Incoming Suite chat that matches the verdict shape is forwarded as a
+// permission notification; anything else is a regular attention event.
+const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i;
+
+// ── Attention bridge ───────────────────────────────────────────────────────
+
+async function emitAttention(payload: AttentionPayload): Promise<void> {
+  const spaceId = payload.signal?.space_id;
+  if (spaceId) activePermissionSpace = spaceId;
+
+  const text = payload.message?.content ?? "";
+  const maybeVerdict = ALLOW_PERMISSION_RELAY ? PERMISSION_REPLY_RE.exec(text) : null;
+
+  if (maybeVerdict) {
+    await mcp.notification({
+      method: "notifications/claude/channel/permission",
+      params: {
+        request_id: maybeVerdict[2].toLowerCase(),
+        behavior: maybeVerdict[1].toLowerCase().startsWith("y") ? "allow" : "deny",
+      },
+    });
+    return;
+  }
+
+  const meta: Record<string, string> = {};
+  if (payload.signal?.space_id) meta.space_id = payload.signal.space_id;
+  if (payload.signal?.task_id) meta.task_id = payload.signal.task_id;
+  if (payload.signal?.task_status) meta.task_status = payload.signal.task_status;
+  if (payload.signal?.reason) meta.reason = payload.signal.reason;
+  if (payload.message?.author) meta.author = payload.message.author;
+  if (payload.message?.author_id) meta.author_id = payload.message.author_id;
+
+  await mcp.notification({
+    method: "notifications/claude/channel",
+    params: { content: text, meta },
+  });
+}
+
+// ── Startup ────────────────────────────────────────────────────────────────
+
+const suite = new SuiteClient(
+  {
+    url: SUITE_URL,
+    runtimeId: SUITE_RUNTIME_ID,
+    token: SUITE_TOKEN,
+  },
+  {
+    onAttention: (payload) => {
+      void emitAttention(payload).catch((err) => {
+        console.error("[claude-code-suite-channel] attention handler error:", err);
+      });
+    },
+    onDisconnect: () => {
+      console.error("[claude-code-suite-channel] disconnected from Suite");
+    },
+    onSpacesManifest: (spaces) => {
+      console.error(`[claude-code-suite-channel] spaces_manifest: ${spaces.length} spaces`);
+    },
+  },
+);
+
+await mcp.connect(new StdioServerTransport());
+suite.connect();
+
+// Clean shutdown
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => {
+    suite.disconnect();
+    process.exit(0);
+  });
+}
