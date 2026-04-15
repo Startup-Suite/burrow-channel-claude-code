@@ -36,6 +36,7 @@ const instructions = [
   'Messages arrive from Startup Suite as <channel source="startup-suite" space_id="..." task_id="..." reason="..." author="..." author_id="...">.',
   "Reply with the `suite_reply` tool, passing the `space_id` attribute from the inbound tag.",
   "To attach files, use `suite_reply_with_media` (attachments are base64-encoded).",
+  "For long or multi-step replies, use `suite_reply_chunk` instead: generate one `chunk_id` at the start, then call the tool repeatedly with the cumulative `text` and `done:false`, finishing with `done:true`. This gives Suite readers progressive reveal instead of a single big block.",
   "Call `suite_typing` with `typing: true` when you start composing a long reply, and `typing: false` when done.",
   "Task-scoped work: the inbound tag carries task_id when Suite is dispatching a task. Consider delegating to a sub-agent (Task tool) scoped to that task so the main session stays oriented.",
   ALLOW_PERMISSION_RELAY
@@ -77,6 +78,19 @@ const REPLY_WITH_MEDIA_SCHEMA = z.object({
 const TYPING_SCHEMA = z.object({
   space_id: z.string(),
   typing: z.boolean(),
+});
+
+const REPLY_CHUNK_SCHEMA = z.object({
+  space_id: z.string(),
+  chunk_id: z
+    .string()
+    .describe(
+      "Stable identifier shared across all chunks of one reply — Suite appends chunks with the same id to a single message. Generate it once at the start of a chunked reply and reuse it for each chunk.",
+    ),
+  text: z.string().describe("Cumulative reply text so far (not delta). Suite replaces the in-flight message with this text on every chunk."),
+  done: z
+    .boolean()
+    .describe("Set to true on the final chunk of the reply so Suite finalizes the message. Set to false while more chunks are coming."),
 });
 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -133,6 +147,30 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["space_id", "typing"],
       },
     },
+    {
+      name: "suite_reply_chunk",
+      description:
+        "Send a partial reply chunk to a Suite space, appearing to the human as a progressively-revealed message. Use this for long or multi-step replies: call it several times in a row with the same chunk_id, passing the cumulative text each call. Set done:true on the last call. Prefer suite_reply for short replies where progressive reveal adds no value.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          space_id: { type: "string" },
+          chunk_id: {
+            type: "string",
+            description: "Stable id across all chunks of one reply. Reuse it on every chunk.",
+          },
+          text: {
+            type: "string",
+            description: "Cumulative reply text so far (not delta).",
+          },
+          done: {
+            type: "boolean",
+            description: "true on the final chunk, false otherwise.",
+          },
+        },
+        required: ["space_id", "chunk_id", "text", "done"],
+      },
+    },
   ],
 }));
 
@@ -162,6 +200,17 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const { space_id, typing } = TYPING_SCHEMA.parse(req.params.arguments);
       suite.sendTyping(space_id, typing);
       return { content: [{ type: "text", text: typing ? "typing on" : "typing off" }] };
+    }
+    case "suite_reply_chunk": {
+      const { space_id, chunk_id, text, done } = REPLY_CHUNK_SCHEMA.parse(req.params.arguments);
+      suite.sendReplyChunk(space_id, chunk_id, text, done);
+      // Suite's reply_chunk is ephemeral (PubSub broadcast only). On the final
+      // chunk we also fire a regular reply so the message persists to the DB
+      // and shows up in space history.
+      if (done) suite.sendReply(space_id, text);
+      return {
+        content: [{ type: "text", text: done ? `chunk ${chunk_id} finalized and persisted` : `chunk ${chunk_id} appended` }],
+      };
     }
     default:
       throw new Error(`unknown tool: ${req.params.name}`);
