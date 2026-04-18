@@ -119,6 +119,10 @@ export class SuiteClient {
     this.channel?.push("typing", { space_id: spaceId, typing });
   }
 
+  sendReaction(spaceId: string, messageId: string, emoji: string): void {
+    this.channel?.push("react", { space_id: spaceId, message_id: messageId, emoji });
+  }
+
   sendReplyChunk(spaceId: string, chunkId: string, text: string, done: boolean): void {
     this.channel?.push("reply_chunk", {
       space_id: spaceId,

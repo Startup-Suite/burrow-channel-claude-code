@@ -33,8 +33,9 @@ if (ALLOW_PERMISSION_RELAY) {
 }
 
 const instructions = [
-  'Messages arrive from Startup Suite as <channel source="startup-suite" space_id="..." task_id="..." reason="..." author="..." author_id="...">.',
+  'Messages arrive from Startup Suite as <channel source="startup-suite" space_id="..." message_id="..." task_id="..." reason="..." author="..." author_id="...">.',
   "Reply with the `suite_reply` tool, passing the `space_id` attribute from the inbound tag.",
+  "For quick acknowledgements (👍 got it, ✅ done, 🎉 shipped) prefer `suite_react` over a text reply — pass `space_id` and `message_id` from the inbound tag. Mobile Suite readers see this as a lightweight reaction.",
   "To attach files, use `suite_reply_with_media` (attachments are base64-encoded).",
   "For long or multi-step replies, use `suite_reply_chunk` instead: generate one `chunk_id` at the start, then call the tool repeatedly with the cumulative `text` and `done:false`, finishing with `done:true`. This gives Suite readers progressive reveal instead of a single big block.",
   "Call `suite_typing` with `typing: true` when you start composing a long reply, and `typing: false` when done.",
@@ -78,6 +79,18 @@ const REPLY_WITH_MEDIA_SCHEMA = z.object({
 const TYPING_SCHEMA = z.object({
   space_id: z.string(),
   typing: z.boolean(),
+});
+
+const REACT_SCHEMA = z.object({
+  space_id: z.string(),
+  message_id: z
+    .string()
+    .describe("UUID of the message to react to (from the inbound channel tag's message_id)"),
+  emoji: z
+    .string()
+    .min(1)
+    .max(16)
+    .describe("Single emoji grapheme, e.g. 👍 🎉 ✅. Suite's mobile clients render this as a lightweight reaction rather than a reply."),
 });
 
 const REPLY_CHUNK_SCHEMA = z.object({
@@ -148,6 +161,20 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "suite_react",
+      description:
+        "React to a specific Suite message with an emoji. Prefer this over a text reply for quick acknowledgements (👍 got it, ✅ done, 🎉 shipped) — especially valuable for mobile Suite readers where a tap beats a typed reply. Requires the message_id from the inbound <channel> tag.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          space_id: { type: "string" },
+          message_id: { type: "string" },
+          emoji: { type: "string" },
+        },
+        required: ["space_id", "message_id", "emoji"],
+      },
+    },
+    {
       name: "suite_reply_chunk",
       description:
         "Send a partial reply chunk to a Suite space, appearing to the human as a progressively-revealed message. Use this for long or multi-step replies: call it several times in a row with the same chunk_id, passing the cumulative text each call. Set done:true on the last call. Prefer suite_reply for short replies where progressive reveal adds no value.",
@@ -200,6 +227,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const { space_id, typing } = TYPING_SCHEMA.parse(req.params.arguments);
       suite.sendTyping(space_id, typing);
       return { content: [{ type: "text", text: typing ? "typing on" : "typing off" }] };
+    }
+    case "suite_react": {
+      const { space_id, message_id, emoji } = REACT_SCHEMA.parse(req.params.arguments);
+      suite.sendReaction(space_id, message_id, emoji);
+      return { content: [{ type: "text", text: `reacted ${emoji}` }] };
     }
     case "suite_reply_chunk": {
       const { space_id, chunk_id, text, done } = REPLY_CHUNK_SCHEMA.parse(req.params.arguments);
@@ -269,6 +301,7 @@ async function emitAttention(payload: AttentionPayload): Promise<void> {
 
   const meta: Record<string, string> = {};
   if (payload.signal?.space_id) meta.space_id = payload.signal.space_id;
+  if (payload.signal?.message_id) meta.message_id = payload.signal.message_id;
   if (payload.signal?.task_id) meta.task_id = payload.signal.task_id;
   if (payload.signal?.task_status) meta.task_status = payload.signal.task_status;
   if (payload.signal?.reason) meta.reason = payload.signal.reason;

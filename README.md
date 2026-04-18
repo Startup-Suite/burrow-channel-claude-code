@@ -74,6 +74,7 @@ Until this plugin is submitted and approved, use the development flag:
 | Attention → session       | ✅     | Posted as `<channel source="startup-suite" …>` with task/space meta   |
 | Reply (text)              | ✅     | `suite_reply` tool                                                    |
 | Reply with media          | ✅     | `suite_reply_with_media` tool, base64 attachments                     |
+| Reaction                  | ✅     | `suite_react` tool — emoji reaction on a specific message             |
 | Typing indicator          | ✅     | `suite_typing` tool                                                   |
 | Reply chunks              | ✅     | `suite_reply_chunk` tool — cumulative-text progressive reveal          |
 | Permission relay          | ✅     | Opt-in via `SUITE_ALLOW_PERMISSION_RELAY=1`                           |
