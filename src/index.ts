@@ -34,7 +34,7 @@ if (ALLOW_PERMISSION_RELAY) {
 }
 
 const instructions = [
-  'Messages arrive from Startup Suite as <channel source="startup-suite" space_id="..." task_id="..." reason="..." author="..." author_id="...">.',
+  'Messages arrive from Startup Suite as <channel source="startup-suite" space_id="..." message_id="..." task_id="..." reason="..." author="..." author_id="...">.',
   "Reply with the `suite_reply` tool, passing the `space_id` attribute from the inbound tag.",
   "To attach files, use `suite_reply_with_media` (attachments are base64-encoded).",
   "For long or multi-step replies, use `suite_reply_chunk` instead: generate one `chunk_id` at the start, then call the tool repeatedly with the cumulative `text` and `done:false`, finishing with `done:true`. This gives Suite readers progressive reveal instead of a single big block.",

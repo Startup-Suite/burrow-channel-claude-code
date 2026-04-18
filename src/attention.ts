@@ -79,6 +79,7 @@ export function makeEmitAttention(opts: EmitAttentionOptions): (payload: Attenti
 
     const meta: Record<string, string> = {};
     if (payload.signal?.space_id) meta.space_id = payload.signal.space_id;
+    if (payload.signal?.message_id) meta.message_id = payload.signal.message_id;
     if (payload.signal?.task_id) meta.task_id = payload.signal.task_id;
     if (payload.signal?.task_status) meta.task_status = payload.signal.task_status;
     if (payload.signal?.reason) meta.reason = payload.signal.reason;
