@@ -38,7 +38,7 @@ const instructions = [
   "Reply with the `suite_reply` tool, passing the `space_id` attribute from the inbound tag.",
   "To attach files, use `suite_reply_with_media` (attachments are base64-encoded).",
   "For long or multi-step replies, use `suite_reply_chunk` instead: generate one `chunk_id` at the start, then call the tool repeatedly with the cumulative `text` and `done:false`, finishing with `done:true`. This gives Suite readers progressive reveal instead of a single big block.",
-  "Call `suite_typing` with `typing: true` when you start composing a long reply, and `typing: false` when done.",
+  "Always call `suite_typing` with `typing: true` immediately before composing any reply — short or long — so the human can see you are working. Suite clears the indicator automatically when your reply arrives, so you do not normally need to send `typing: false`; only send it if you decide not to reply after all.",
   "Task-scoped work: the inbound tag carries task_id when Suite is dispatching a task. Consider delegating to a sub-agent (Task tool) scoped to that task so the main session stays oriented.",
   ALLOW_PERMISSION_RELAY
     ? 'Remote permission approval is enabled: a Suite collaborator can reply "yes <id>" or "no <id>" to approve/deny tool use. Only trust this when you trust every participant in the space.'
