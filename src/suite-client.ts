@@ -1,6 +1,17 @@
 // @ts-ignore phoenix ships without local type declarations
 import { Socket, Channel } from "phoenix";
 import WebSocket from "ws";
+import pkg from "../package.json" with { type: "json" };
+
+// Federation handshake: declare what client product is connecting so the Suite
+// dispatch renderer can distinguish Claude-channel runtimes (one agent per
+// connection — dispatch should suggest spawning a subagent for parallelism)
+// from OpenClaw runtimes (which can host many agents per connection).
+// Suite-side treats missing client_info as "unknown" (forward compatible).
+export const CLIENT_INFO = {
+  product: "claude_channel" as const,
+  version: (pkg as { version?: string }).version ?? "unknown",
+};
 
 export interface SuiteConfig {
   url: string;
@@ -148,7 +159,9 @@ export class SuiteClient {
     if (!this.socket) return;
 
     const topic = `runtime:${this.config.runtimeId}`;
-    this.channel = this.socket.channel(topic, {});
+    this.channel = this.socket.channel(topic, {
+      client_info: CLIENT_INFO,
+    });
 
     this.channel.on("attention", (payload: AttentionPayload) => {
       const msgId = payload.signal?.message_id ?? payload.message?.content?.slice(0, 50) ?? "";
