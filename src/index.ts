@@ -7,7 +7,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { SuiteClient, type AttentionPayload } from "./suite-client.ts";
+import { SuiteClient } from "./suite-client.ts";
+import { makeEmitAttention } from "./attention.ts";
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
@@ -243,43 +244,15 @@ if (ALLOW_PERMISSION_RELAY) {
   });
 }
 
-// Incoming Suite chat that matches the verdict shape is forwarded as a
-// permission notification; anything else is a regular attention event.
-const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i;
-
 // ── Attention bridge ───────────────────────────────────────────────────────
 
-async function emitAttention(payload: AttentionPayload): Promise<void> {
-  const spaceId = payload.signal?.space_id;
-  if (spaceId) activePermissionSpace = spaceId;
-
-  const text = payload.message?.content ?? "";
-  const maybeVerdict = ALLOW_PERMISSION_RELAY ? PERMISSION_REPLY_RE.exec(text) : null;
-
-  if (maybeVerdict) {
-    await mcp.notification({
-      method: "notifications/claude/channel/permission",
-      params: {
-        request_id: maybeVerdict[2].toLowerCase(),
-        behavior: maybeVerdict[1].toLowerCase().startsWith("y") ? "allow" : "deny",
-      },
-    });
-    return;
-  }
-
-  const meta: Record<string, string> = {};
-  if (payload.signal?.space_id) meta.space_id = payload.signal.space_id;
-  if (payload.signal?.task_id) meta.task_id = payload.signal.task_id;
-  if (payload.signal?.task_status) meta.task_status = payload.signal.task_status;
-  if (payload.signal?.reason) meta.reason = payload.signal.reason;
-  if (payload.message?.author) meta.author = payload.message.author;
-  if (payload.message?.author_id) meta.author_id = payload.message.author_id;
-
-  await mcp.notification({
-    method: "notifications/claude/channel",
-    params: { content: text, meta },
-  });
-}
+const emitAttention = makeEmitAttention({
+  notify: (n) => mcp.notification(n),
+  allowPermissionRelay: ALLOW_PERMISSION_RELAY,
+  setActivePermissionSpace: (spaceId) => {
+    activePermissionSpace = spaceId;
+  },
+});
 
 // ── Startup ────────────────────────────────────────────────────────────────
 

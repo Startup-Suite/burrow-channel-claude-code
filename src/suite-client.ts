@@ -2,6 +2,7 @@
 import { Socket, Channel } from "phoenix";
 import WebSocket from "ws";
 import pkg from "../package.json" with { type: "json" };
+import { resetHistoryTracking } from "./attention.ts";
 
 // Federation handshake: declare what client product is connecting so the Suite
 // dispatch renderer can distinguish Claude-channel runtimes (one agent per
@@ -70,6 +71,11 @@ export class SuiteClient {
 
   connect(): void {
     this.stopped = false;
+
+    // Fresh socket session: re-arm per-space history injection so attentions
+    // we may have missed during a disconnect can re-bring history into the
+    // Claude session.
+    resetHistoryTracking();
 
     if (this.channel) {
       try { this.channel.leave(); } catch { /* noop */ }
