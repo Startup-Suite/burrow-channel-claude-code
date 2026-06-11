@@ -50,6 +50,19 @@ export interface SuiteHandlers {
 const DEFAULT_RECONNECT_MS = 1_000;
 const DEFAULT_MAX_RECONNECT_MS = 30_000;
 
+// Dead-man watchdog: a healthy Phoenix socket carries traffic at least every
+// heartbeat interval (30s — heartbeat replies count), so prolonged total
+// silence means the connection is dead even if the client still believes it
+// is open (laptop sleep, NAT timeout, half-open TCP). The watchdog forces a
+// reconnect when the socket reports disconnected or has been silent past the
+// stale threshold.
+const WATCHDOG_INTERVAL_MS = 30_000;
+const STALE_TRAFFIC_MS = 120_000;
+
+function log(msg: string): void {
+  console.error(`[suite-client ${new Date().toISOString()}] ${msg}`);
+}
+
 /**
  * Phoenix WebSocket client for a Suite runtime connection. Adapted from
  * startup-suite-channel (the OpenClaw plugin). This version is scoped down to
@@ -61,6 +74,8 @@ export class SuiteClient {
   private channel: Channel | null = null;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private lastTrafficAt = Date.now();
   private stopped = false;
   private recentMessageIds = new Set<string>();
 
@@ -97,23 +112,55 @@ export class SuiteClient {
       reconnectAfterMs: () => 999_999_999, // we handle reconnect ourselves
     });
 
+    this.lastTrafficAt = Date.now();
+    log(`connecting to ${this.config.url} (attempt ${this.reconnectAttempts + 1})`);
+
     this.socket.onOpen(() => {
-      this.reconnectAttempts = 0;
+      log("socket open");
+      this.lastTrafficAt = Date.now();
     });
 
     this.socket.onClose((event: any) => {
       if (!this.stopped) {
+        log(`socket closed (code=${event?.code ?? "?"} reason=${event?.reason || "n/a"})`);
         this.handlers.onDisconnect();
         this.scheduleReconnect();
       }
     });
 
-    this.socket.onError((_err: any) => {
-      if (!this.stopped) this.handlers.onDisconnect();
+    this.socket.onError((err: any) => {
+      if (!this.stopped) {
+        log(`socket error: ${err?.message ?? err}`);
+        this.handlers.onDisconnect();
+        // Some failure modes (rejected upgrade, DNS, half-open TCP) surface
+        // as an error without a matching close event — re-enter the
+        // reconnect loop from here too. scheduleReconnect dedupes, so an
+        // error followed by a close only arms one timer.
+        this.scheduleReconnect();
+      }
     });
 
-    this.socket.connect();
-    this.joinChannel();
+    // Heartbeat replies and channel events both land here; any traffic at
+    // all proves the connection is alive. Defensive call: test shims may
+    // not implement onMessage.
+    (this.socket as any).onMessage?.(() => {
+      this.lastTrafficAt = Date.now();
+    });
+
+    // The watchdog must be armed even if the dial below throws, so a
+    // synchronous connect failure on the FIRST attempt (DNS down at boot,
+    // bad URL) still enters the retry loop instead of leaving the client
+    // permanently idle.
+    this.startWatchdog();
+
+    try {
+      this.socket.connect();
+      this.joinChannel();
+    } catch (err) {
+      log(`connect failed synchronously: ${err instanceof Error ? err.message : err}`);
+      this.handlers.onDisconnect();
+      this.scheduleReconnect();
+    }
   }
 
   disconnect(): void {
@@ -121,6 +168,10 @@ export class SuiteClient {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
     }
     this.channel?.leave();
     this.channel = null;
@@ -198,11 +249,45 @@ export class SuiteClient {
     this.channel
       .join()
       .receive("ok", () => {
-        console.error(`[suite-client] joined ${topic}`);
+        log(`joined ${topic}`);
+        // Join success — not socket open — is the real "we're back":
+        // reset the backoff here so a flaky join doesn't shrink delays.
+        this.reconnectAttempts = 0;
+        this.lastTrafficAt = Date.now();
       })
       .receive("error", (reason: unknown) => {
-        console.error(`[suite-client] failed to join ${topic}:`, reason);
+        // A rejected join (stale token, runtime deregistered, server-side
+        // crash) previously logged once and left inbound dead forever while
+        // the socket looked healthy. Treat it as a disconnect and keep
+        // retrying with backoff.
+        log(`failed to join ${topic}: ${JSON.stringify(reason)} — scheduling reconnect`);
+        this.handlers.onDisconnect();
+        this.scheduleReconnect();
+      })
+      .receive("timeout", () => {
+        log(`join ${topic} timed out — scheduling reconnect`);
+        this.handlers.onDisconnect();
+        this.scheduleReconnect();
       });
+  }
+
+  private startWatchdog(): void {
+    if (this.watchdogTimer) return;
+
+    this.watchdogTimer = setInterval(() => {
+      if (this.stopped || this.reconnectTimer) return;
+
+      const silentMs = Date.now() - this.lastTrafficAt;
+      const connected = (this.socket as any)?.isConnected?.() ?? false;
+
+      if (!connected || silentMs > STALE_TRAFFIC_MS) {
+        log(
+          `watchdog: unhealthy (connected=${connected}, silent=${Math.round(silentMs / 1000)}s) — forcing reconnect`,
+        );
+        this.handlers.onDisconnect();
+        this.scheduleReconnect();
+      }
+    }, WATCHDOG_INTERVAL_MS);
   }
 
   private scheduleReconnect(): void {
@@ -212,10 +297,19 @@ export class SuiteClient {
     const max = this.config.maxReconnectIntervalMs ?? DEFAULT_MAX_RECONNECT_MS;
     const delay = Math.min(base * Math.pow(2, this.reconnectAttempts), max);
 
+    log(`reconnect scheduled in ${delay}ms (attempt ${this.reconnectAttempts + 1})`);
+
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.reconnectAttempts += 1;
-      this.connect();
+      try {
+        this.connect();
+      } catch (err) {
+        // A synchronous connect failure (e.g. WebSocket constructor throw)
+        // must not end the loop.
+        log(`connect threw: ${err instanceof Error ? err.message : err} — rescheduling`);
+        this.scheduleReconnect();
+      }
     }, delay);
   }
 }
