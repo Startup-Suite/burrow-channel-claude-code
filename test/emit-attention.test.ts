@@ -403,3 +403,80 @@ describe("emitAttention — system_event responsibility dispatches", () => {
     expect(seen).toEqual(["spaceA", "spaceB"]);
   });
 });
+
+describe("emitAttention — content-less housekeeping filter", () => {
+  test("empty content with no task or message reference is dropped", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit({
+      signal: { reason: "system_event" },
+      message: { content: "", author: "" },
+    });
+
+    expect(calls.length).toBe(0);
+  });
+
+  test("whitespace-only content with no references is dropped", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit({
+      signal: { reason: "system_event", space_id: "spaceA" },
+      message: { content: "  \n ", author: "" },
+    });
+
+    expect(calls.length).toBe(0);
+  });
+
+  test("empty content WITH a task_id is still forwarded (status transitions)", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit({
+      signal: { reason: "watch", task_id: "taskZ", task_status: "deploying" },
+      message: { content: "", author: "TaskRouter" },
+    });
+
+    expect(calls.length).toBe(1);
+    const meta = calls[0]!.params.meta as Record<string, string>;
+    expect(meta.task_id).toBe("taskZ");
+  });
+
+  test("empty content WITH a message_id is still forwarded", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit({
+      signal: { reason: "message", space_id: "spaceA", message_id: "m-1" },
+      message: { content: "", author: "Alice" },
+    });
+
+    expect(calls.length).toBe(1);
+  });
+
+  test("a dropped noise event does not consume the space's one-time history injection", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    // Housekeeping noise from spaceA arrives first, carrying history.
+    await emit({
+      signal: { reason: "system_event", space_id: "spaceA" },
+      message: { content: "", author: "" },
+      history: [{ author: "Alice", content: "earlier turn" }],
+    });
+    // The first real message must still get the history block.
+    await emit(
+      buildPayload({
+        spaceId: "spaceA",
+        text: "real message",
+        history: [{ author: "Alice", content: "earlier turn" }],
+      }),
+    );
+
+    expect(calls.length).toBe(1);
+    const content = calls[0]!.params.content as string;
+    expect(content).toContain("Recent context");
+    expect(content).toContain("Current message:\nreal message");
+  });
+});

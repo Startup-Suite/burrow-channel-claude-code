@@ -100,6 +100,19 @@ export function makeEmitAttention(opts: EmitAttentionOptions): (payload: Attenti
       return;
     }
 
+    // Suite housekeeping signals (presence sweeps, reconnect echoes) arrive
+    // as attention payloads with an empty message body and no task or message
+    // reference. Forwarding them surfaces empty <channel> tags in the Claude
+    // session, so drop anything that has no content and nothing to act on.
+    // Runs before history injection so noise can't consume a space's one-time
+    // history block.
+    if (text.trim() === "" && !payload.signal?.task_id && !payload.signal?.message_id) {
+      console.error(
+        `[claude-code-suite-channel] dropped content-less attention (reason=${payload.signal?.reason || "unknown"})`,
+      );
+      return;
+    }
+
     const meta: Record<string, string> = {};
     if (payload.signal?.space_id) meta.space_id = payload.signal.space_id;
     if (payload.signal?.message_id) meta.message_id = payload.signal.message_id;
