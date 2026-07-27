@@ -135,6 +135,34 @@ export function makeEmitAttention(opts: EmitAttentionOptions): (payload: Attenti
       if (typeof value === "string" && value) meta[key] = value;
     }
 
+    // Drop attentions that carry no body AND nothing to correlate — presence
+    // sweeps and reconnect echoes. Forwarding those surfaces an empty
+    // <channel> tag that interrupts the session with nothing to act on.
+    //
+    // Deliberately placed HERE, after `meta` is resolved, not next to the
+    // `text` assignment:
+    //
+    //   - `task_id` legitimately arrives inside `signal.metadata`, so a guard
+    //     reading `payload.signal.task_id` alone would drop a dispatch whose
+    //     id the whitelist loop above just resolved. The question "can we
+    //     correlate this?" must be asked against the same resolution the tag
+    //     will actually carry.
+    //   - `responsibility_key` counts as actionable even with a blank body. A
+    //     responsibility that fired and rendered nothing is a DEFECT SIGNAL,
+    //     not housekeeping — it is precisely the shape of the bug fixed in
+    //     #15, where the empty tag was the only evidence the defect left and
+    //     the sole reason it was ever found. Filtering those re-blinds us.
+    //
+    // Still lands after space pinning (permission relay unchanged) and before
+    // history injection (noise can't consume a space's one-time history
+    // block). Both are pinned by tests.
+    if (!text.trim() && !meta.task_id && !meta.message_id && !meta.responsibility_key) {
+      console.error(
+        `[claude-code-suite-channel] dropped content-less attention (reason=${meta.reason || "unknown"})`,
+      );
+      return;
+    }
+
     let content = text;
     if (
       spaceId &&
