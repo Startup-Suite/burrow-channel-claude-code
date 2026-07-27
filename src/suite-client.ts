@@ -29,10 +29,62 @@ export interface AttentionPayload {
     task_id?: string;
     task_status?: string;
     message_id?: string;
+    // ── Responsibility dispatches (`reason: "system_event"`) ──────────────
+    //
+    // These carry NO `message` key at all. `agent_responder.ex:477`
+    // (`build_system_event_signal/2`) builds the whole payload from the
+    // responsibility context: the Router renders the prompt into
+    // `metadata.prompt`, and line 493 lifts it to `signal.prompt` "so a
+    // federated runtime can read `signal.prompt` without digging".
+    prompt?: string;
+    responsibility_key?: string;
+    feature?: string;
+    trigger_kind?: string;
+    agent_id?: string;
+    agent_slug?: string;
+    // Correlation ids live in here, not at the top level — see
+    // `router.ex:1447` (`@native_trigger_scalar_keys`). Deliberately typed
+    // `unknown` so nothing reads it without narrowing: it also holds the
+    // full rendered prompt, and on the chat path a frozen history snapshot.
+    metadata?: Record<string, unknown>;
   };
-  message: { content: string; author: string; author_id?: string };
+  // OPTIONAL. Typing this as required is why the client assumed it existed
+  // and read `message.content` unconditionally, which made every
+  // responsibility dispatch arrive as an empty <channel> tag.
+  message?: { content: string; author: string; author_id?: string };
   history?: Array<{ content: string; author: string; role?: string }>;
   context?: Record<string, unknown>;
+}
+
+/**
+ * Everything that identifies an attention event, for the ~1s dedupe window.
+ *
+ * The old key was `space_id:message_id:bucket`. A responsibility dispatch has
+ * neither field — `space_id` isn't in `build_system_event_signal/2` and
+ * `message_id` is chat-only — so it degraded to `"::<bucket>"` and ANY two
+ * dispatches landing in the same second collapsed into one. Latent until the
+ * `signal.prompt` fallback made these payloads reachable at all; shipping that
+ * fix without this one would have traded blank wake-ups for dropped ones.
+ *
+ * Every added component can only make the key MORE unique, never less, so a
+ * genuine Suite retry (byte-identical payload) still collapses exactly as
+ * before. Dedupe erring open is the safe direction: a duplicate wake-up is
+ * visible and annoying, a dropped dispatch is silent.
+ */
+export function attentionIdentity(payload: AttentionPayload): string {
+  const signal = payload.signal;
+  const metadata = signal?.metadata ?? {};
+  const str = (value: unknown): string => (typeof value === "string" ? value : "");
+
+  return [
+    signal?.space_id ?? "",
+    signal?.message_id ?? "",
+    signal?.responsibility_key ?? "",
+    str(metadata.task_id),
+    str(metadata.plan_id),
+    str(metadata.stage_id),
+    payload.message?.content?.slice(0, 50) ?? signal?.prompt?.slice(0, 50) ?? "",
+  ].join(":");
 }
 
 export interface PermissionVerdict {
@@ -221,8 +273,7 @@ export class SuiteClient {
     });
 
     this.channel.on("attention", (payload: AttentionPayload) => {
-      const msgId = payload.signal?.message_id ?? payload.message?.content?.slice(0, 50) ?? "";
-      const dedupeKey = `${payload.signal?.space_id ?? ""}:${msgId}:${Date.now() >> 10}`;
+      const dedupeKey = `${attentionIdentity(payload)}:${Date.now() >> 10}`;
       if (this.recentMessageIds.has(dedupeKey)) return;
       this.recentMessageIds.add(dedupeKey);
       if (this.recentMessageIds.size > 50) {

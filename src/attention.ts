@@ -51,6 +51,18 @@ export interface EmitAttentionOptions {
 // verdicts instead of regular attentions.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i;
 
+// Scalar correlation ids lifted out of `signal.metadata` into the channel
+// tag. Mirrors `@native_trigger_scalar_keys` in core's
+// `responsibilities/router.ex`, plus `space_id` so a dispatch that only
+// names its space inside metadata is still repliable.
+export const METADATA_SCALAR_KEYS = [
+  "task_id",
+  "plan_id",
+  "stage_id",
+  "project_id",
+  "space_id",
+] as const;
+
 /**
  * Build an `emitAttention` function bound to the given notifier. Factored out
  * of `index.ts` so the per-space history injection logic is testable without
@@ -60,10 +72,21 @@ export function makeEmitAttention(opts: EmitAttentionOptions): (payload: Attenti
   const { notify, allowPermissionRelay = false, setActivePermissionSpace } = opts;
 
   return async function emitAttention(payload: AttentionPayload): Promise<void> {
+    // Read from the top level ONLY, not from `signal.metadata`. A background
+    // responsibility dispatch naming a space in its metadata must not re-pin
+    // where a pending permission prompt gets answered — that would silently
+    // move an approval to a space the human isn't watching. `meta.space_id`
+    // below is resolved more permissively, because replying is safe.
     const spaceId = payload.signal?.space_id;
     if (spaceId && setActivePermissionSpace) setActivePermissionSpace(spaceId);
 
-    const text = payload.message?.content ?? "";
+    // Chat attentions carry `message.content`. Responsibility dispatches
+    // (`reason: "system_event"` — design steps, architecture reviews, memory
+    // sweeps, every `event_topic` responsibility) carry no `message` key at
+    // all; their rendered prompt is at `signal.prompt`. Reading only the
+    // first is why those arrived as empty <channel> tags and looked like
+    // housekeeping noise.
+    const text = payload.message?.content ?? payload.signal?.prompt ?? "";
     const maybeVerdict = allowPermissionRelay ? PERMISSION_REPLY_RE.exec(text) : null;
 
     if (maybeVerdict) {
@@ -85,6 +108,32 @@ export function makeEmitAttention(opts: EmitAttentionOptions): (payload: Attenti
     if (payload.signal?.reason) meta.reason = payload.signal.reason;
     if (payload.message?.author) meta.author = payload.message.author;
     if (payload.message?.author_id) meta.author_id = payload.message.author_id;
+
+    // Which responsibility fired, lifted to the top of the signal by
+    // `agent_responder.ex:485-487`. Without these a dispatch says "do this"
+    // with no indication of what asked or why.
+    if (payload.signal?.responsibility_key) {
+      meta.responsibility_key = payload.signal.responsibility_key;
+    }
+    if (payload.signal?.feature) meta.feature = payload.signal.feature;
+    if (payload.signal?.trigger_kind) meta.trigger_kind = payload.signal.trigger_kind;
+
+    // Correlation ids, pulled out of `signal.metadata` one key at a time.
+    //
+    // A WHITELIST, deliberately — never spread the map. It also holds
+    // `prompt` (the entire rendered body, already the tag's content) and on
+    // the chat path a frozen history snapshot, so copying it wholesale would
+    // duplicate the whole dispatch into the tag attributes. Same reasoning as
+    // `@native_trigger_scalar_keys` on the server side (`router.ex:1447`).
+    //
+    // Top level wins: chat attentions set `signal.task_id` directly, and a
+    // value the server put at the top is the more specific statement.
+    const signalMetadata = payload.signal?.metadata ?? {};
+    for (const key of METADATA_SCALAR_KEYS) {
+      if (meta[key]) continue;
+      const value = signalMetadata[key];
+      if (typeof value === "string" && value) meta[key] = value;
+    }
 
     let content = text;
     if (

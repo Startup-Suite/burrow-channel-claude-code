@@ -225,6 +225,152 @@ describe("emitAttention — meta and permission relay still work", () => {
     expect(meta.space_id).toBe("spaceA");
     expect("message_id" in meta).toBe(false);
   });
+});
+
+// Responsibility dispatches — `reason: "system_event"`. Built by
+// `agent_responder.ex:477` (`build_system_event_signal/2`): no `message` key
+// at all, the rendered prompt lifted to `signal.prompt`, correlation ids left
+// inside `signal.metadata`. Reading only `message.content` delivered every one
+// of these as an empty <channel> tag, which read as housekeeping noise.
+describe("emitAttention — system_event responsibility dispatches", () => {
+  // The real wire shape, transcribed from build_system_event_signal/2.
+  function buildSystemEvent(
+    overrides: { prompt?: string; metadata?: Record<string, unknown> } = {},
+  ): AttentionPayload {
+    const { prompt = "Produce a design direction for this task.", metadata = {} } = overrides;
+    return {
+      signal: {
+        reason: "system_event",
+        agent_id: "agent-saru",
+        agent_slug: "saru",
+        responsibility_key: "design.task_direction",
+        feature: "design",
+        trigger_kind: "event_topic",
+        prompt,
+        metadata: {
+          responsibility_key: "design.task_direction",
+          feature: "design",
+          trigger_kind: "event_topic",
+          agent_id: "agent-saru",
+          agent_slug: "saru",
+          task_id: "task-77",
+          project_id: "proj-9",
+          prompt,
+          ...metadata,
+        },
+      },
+    };
+  }
+
+  test("the rendered prompt becomes the content (no message key at all)", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit(buildSystemEvent({ prompt: "Give direction for the Recovery hub." }));
+
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.method).toBe("notifications/claude/channel");
+    expect(calls[0]!.params.content).toBe("Give direction for the Recovery hub.");
+  });
+
+  test("meta names which responsibility fired and carries the correlation ids", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit(buildSystemEvent({ metadata: { plan_id: "plan-3", stage_id: "stage-1" } }));
+
+    const meta = calls[0]!.params.meta as Record<string, string>;
+    expect(meta.reason).toBe("system_event");
+    expect(meta.responsibility_key).toBe("design.task_direction");
+    expect(meta.feature).toBe("design");
+    expect(meta.trigger_kind).toBe("event_topic");
+    // Lifted out of signal.metadata — these are NOT at the top level.
+    expect(meta.task_id).toBe("task-77");
+    expect(meta.plan_id).toBe("plan-3");
+    expect(meta.stage_id).toBe("stage-1");
+    expect(meta.project_id).toBe("proj-9");
+  });
+
+  // The whitelist is the point. `signal.metadata.prompt` is the entire
+  // rendered body — already the tag's content — and the chat path stashes a
+  // frozen history snapshot in there too. Spreading the map would duplicate
+  // the whole dispatch into the tag attributes.
+  test("metadata is whitelisted, not spread", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit(
+      buildSystemEvent({
+        prompt: "a very long rendered prompt",
+        metadata: { history: [{ author: "Alice", content: "secret" }], agent_slug: "saru" },
+      }),
+    );
+
+    const meta = calls[0]!.params.meta as Record<string, string>;
+    expect("prompt" in meta).toBe(false);
+    expect("history" in meta).toBe(false);
+    expect("agent_slug" in meta).toBe(false);
+    expect(JSON.stringify(meta)).not.toContain("secret");
+  });
+
+  test("a top-level signal id wins over the same key in metadata", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit({
+      signal: {
+        reason: "task_dispatch",
+        space_id: "spaceA",
+        task_id: "top-level-task",
+        metadata: { task_id: "metadata-task" },
+      },
+      message: { content: "do the thing", author: "Bob" },
+    });
+
+    const meta = calls[0]!.params.meta as Record<string, string>;
+    expect(meta.task_id).toBe("top-level-task");
+  });
+
+  test("space_id is taken from metadata when the signal omits it", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit(buildSystemEvent({ metadata: { space_id: "space-from-metadata" } }));
+
+    const meta = calls[0]!.params.meta as Record<string, string>;
+    expect(meta.space_id).toBe("space-from-metadata");
+  });
+
+  // Replying is safe; re-pinning a pending permission prompt is not. A
+  // background dispatch must not move where an approval gets answered.
+  test("a metadata-only space does NOT re-pin the permission space", async () => {
+    const { notify } = captureNotifications();
+    const seen: string[] = [];
+    const emit = makeEmitAttention({
+      notify,
+      setActivePermissionSpace: (sid) => seen.push(sid),
+    });
+
+    await emit(buildPayload({ spaceId: "chat-space" }));
+    await emit(buildSystemEvent({ metadata: { space_id: "background-space" } }));
+
+    expect(seen).toEqual(["chat-space"]);
+  });
+
+  test("a prompt-less system_event still emits, with empty content", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit({
+      signal: { reason: "system_event", responsibility_key: "memory.sweep", metadata: {} },
+    });
+
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.params.content).toBe("");
+    expect((calls[0]!.params.meta as Record<string, string>).responsibility_key).toBe(
+      "memory.sweep",
+    );
+  });
 
   test("permission verdict shape bypasses history-prepend logic", async () => {
     const { notify, calls } = captureNotifications();
