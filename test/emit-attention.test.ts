@@ -429,6 +429,44 @@ describe("emitAttention — content-less housekeeping filter", () => {
     expect(calls.length).toBe(0);
   });
 
+  // The guard must ask "can we correlate this?" using the SAME resolution the
+  // meta block uses. `task_id` legitimately arrives inside `signal.metadata`
+  // (see METADATA_SCALAR_KEYS), so a guard reading only the top level would
+  // drop a dispatch whose id the very next block resolves successfully.
+  test("empty content with a task_id ONLY in signal.metadata is forwarded", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit({
+      signal: {
+        reason: "system_event",
+        metadata: { task_id: "task-in-metadata", stage_id: "stage-7" },
+      },
+    });
+
+    expect(calls.length).toBe(1);
+    const meta = calls[0]!.params.meta as Record<string, string>;
+    expect(meta.task_id).toBe("task-in-metadata");
+    expect(meta.stage_id).toBe("stage-7");
+  });
+
+  // A responsibility that fired and rendered NOTHING is a defect signal, not
+  // housekeeping. That is the exact shape of the bug #15 fixed, and the empty
+  // <channel> tag was the only evidence it left — it is how the defect was
+  // found at all. Dropping these would re-blind us to a recurrence.
+  test("empty content WITH a responsibility_key is forwarded (defect signal, not noise)", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit({
+      signal: { reason: "system_event", responsibility_key: "design.critique", metadata: {} },
+    });
+
+    expect(calls.length).toBe(1);
+    const meta = calls[0]!.params.meta as Record<string, string>;
+    expect(meta.responsibility_key).toBe("design.critique");
+  });
+
   test("empty content WITH a task_id is still forwarded (status transitions)", async () => {
     const { notify, calls } = captureNotifications();
     const emit = makeEmitAttention({ notify });
