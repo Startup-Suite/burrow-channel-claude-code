@@ -194,6 +194,7 @@ describe("emitAttention — meta and permission relay still work", () => {
       signal: {
         reason: "task_dispatch",
         space_id: "spaceA",
+        message_id: "msg-42",
         task_id: "taskZ",
         task_status: "in_progress",
       },
@@ -202,11 +203,27 @@ describe("emitAttention — meta and permission relay still work", () => {
 
     const meta = calls[0]!.params.meta as Record<string, string>;
     expect(meta.space_id).toBe("spaceA");
+    expect(meta.message_id).toBe("msg-42");
     expect(meta.task_id).toBe("taskZ");
     expect(meta.task_status).toBe("in_progress");
     expect(meta.reason).toBe("task_dispatch");
     expect(meta.author).toBe("Bob");
     expect(meta.author_id).toBe("u-bob");
+  });
+
+  // The guard matters as much as the forward: an attention with no message_id
+  // (task-router dispatches don't carry one) must leave the key ABSENT rather
+  // than emit an empty string, so Claude can tell "no addressable message"
+  // apart from "message id is blank".
+  test("meta omits message_id when the signal does not carry one", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit(buildPayload({ spaceId: "spaceA" }));
+
+    const meta = calls[0]!.params.meta as Record<string, string>;
+    expect(meta.space_id).toBe("spaceA");
+    expect("message_id" in meta).toBe(false);
   });
 
   test("permission verdict shape bypasses history-prepend logic", async () => {
