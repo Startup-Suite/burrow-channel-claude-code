@@ -518,3 +518,102 @@ describe("emitAttention — content-less housekeeping filter", () => {
     expect(content).toContain("Current message:\nreal message");
   });
 });
+
+// ── Server-contract fixtures ───────────────────────────────────────────────
+//
+// The payloads below are built to match core's `build_system_event_signal/2`
+// (`platform/chat/agent_responder.ex:477-495`) as it actually is, NOT
+// reconstructed from a rendered <channel> tag. Deriving the input from the
+// output would assume the very mapping under test.
+//
+// Two properties of that function drive everything here:
+//
+//   1. The signal carries ONLY `reason`, `agent_id`, `agent_slug` plus four
+//      `maybe_put` fields (`responsibility_key`, `feature`, `trigger_kind`,
+//      `prompt`) and the whole `metadata` map. It sets **no** `space_id`,
+//      `task_id`, `plan_id` or `stage_id` at the top level — every
+//      correlation id reaches us exclusively through `metadata`.
+//   2. `maybe_put(map, _key, nil), do: map` — a responsibility whose provider
+//      implements no `build_prompt/1` yields a signal with **no `prompt` key
+//      at all**, not an empty one. There is no `message` key on this path
+//      either, so the body is genuinely absent.
+//
+// The whole payload is `%{signal: ...}` — which is why `AttentionPayload.message`
+// had to become optional.
+
+describe("emitAttention — against core's build_system_event_signal/2", () => {
+  test("the one dispatch observed live in production emits with its body and ids intact", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    // Shape of the 2026-07-27T19:57:21Z architecture.review_plan dispatch:
+    // 16,070 bytes of rendered prompt, correlation ids in metadata only.
+    const prompt = "You are the Architect on the Suite plan-review path…";
+    await emit({
+      signal: {
+        reason: "system_event",
+        responsibility_key: "architecture.review_plan",
+        feature: "architecture",
+        prompt,
+        metadata: {
+          feature: "architecture",
+          prompt,
+          plan_id: "019fa527-2ec2-72b3-b39d-c03bbfd7b36e",
+          task_id: "019fa504-90f9-7f57-ac67-888093ef8e20",
+        },
+      },
+    });
+
+    expect(calls.length).toBe(1);
+    const { params } = calls[0]!;
+    expect(params.content).toBe(prompt);
+
+    const meta = params.meta as Record<string, string>;
+    expect(meta.responsibility_key).toBe("architecture.review_plan");
+    expect(meta.feature).toBe("architecture");
+    expect(meta.plan_id).toBe("019fa527-2ec2-72b3-b39d-c03bbfd7b36e");
+    expect(meta.task_id).toBe("019fa504-90f9-7f57-ac67-888093ef8e20");
+    expect(meta.reason).toBe("system_event");
+
+    // The prompt is the body; it must not also be copied into the attributes.
+    expect(meta.prompt).toBeUndefined();
+  });
+
+  test("a responsibility with no rendered prompt still reaches us, correlated from metadata", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    // `maybe_put` omitted `prompt` outright: no body, ids in metadata only.
+    // This is the exact shape a top-level-only guard would have dropped.
+    await emit({
+      signal: {
+        reason: "system_event",
+        responsibility_key: "design.critique",
+        metadata: {
+          task_id: "019fa504-90f9-7f57-ac67-888093ef8e20",
+          stage_id: "019fa530-1111-7000-9000-000000000001",
+        },
+      },
+    });
+
+    expect(calls.length).toBe(1);
+    const meta = calls[0]!.params.meta as Record<string, string>;
+    expect(calls[0]!.params.content).toBe("");
+    expect(meta.task_id).toBe("019fa504-90f9-7f57-ac67-888093ef8e20");
+    expect(meta.stage_id).toBe("019fa530-1111-7000-9000-000000000001");
+    expect(meta.responsibility_key).toBe("design.critique");
+  });
+
+  test("a signal with neither prompt nor any metadata id is the genuine noise case", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    // Same server path, nothing to correlate and nothing to say. This is the
+    // only shape the filter is entitled to drop.
+    await emit({
+      signal: { reason: "system_event", metadata: {} },
+    });
+
+    expect(calls.length).toBe(0);
+  });
+});
