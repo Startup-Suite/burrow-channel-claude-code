@@ -357,7 +357,15 @@ describe("emitAttention — system_event responsibility dispatches", () => {
     expect(seen).toEqual(["chat-space"]);
   });
 
-  test("a prompt-less system_event still emits, with empty content", async () => {
+  // BEHAVIOUR CHANGE, 019fa618 stage 4 — this test used to assert
+  // `content === ""` and was green. The empty string was DELIBERATE at the
+  // time and correct to assert: the point being made was "it still emits", and
+  // pinning the exact body it emitted was the honest way to say it. It is
+  // replaced because the empty tag turned out to BE the defect — an agent woken
+  // by one has nothing to act on and cannot tell it from housekeeping noise —
+  // not because asserting it was wrong. The placeholder is pinned in full by
+  // `test/system-event-envelope.test.ts`; this file keeps the shape assertion.
+  test("a prompt-less system_event still emits, with a placeholder body", async () => {
     const { notify, calls } = captureNotifications();
     const emit = makeEmitAttention({ notify });
 
@@ -366,7 +374,9 @@ describe("emitAttention — system_event responsibility dispatches", () => {
     });
 
     expect(calls.length).toBe(1);
-    expect(calls[0]!.params.content).toBe("");
+    expect(calls[0]!.params.content).toMatch(/^System dispatch:/);
+    expect(calls[0]!.params.content).toContain("memory.sweep");
+    expect(calls[0]!.params.content).not.toBe("");
     expect((calls[0]!.params.meta as Record<string, string>).responsibility_key).toBe(
       "memory.sweep",
     );
@@ -598,7 +608,13 @@ describe("emitAttention — against core's build_system_event_signal/2", () => {
 
     expect(calls.length).toBe(1);
     const meta = calls[0]!.params.meta as Record<string, string>;
-    expect(calls[0]!.params.content).toBe("");
+    // BEHAVIOUR CHANGE, 019fa618 stage 4 — was `toBe("")`, green and
+    // deliberate: this test is about CORRELATION, and the empty body was the
+    // true observation to record alongside it at the time. Replaced for the
+    // same reason as the sibling above — the empty tag is the defect shape.
+    // Every id assertion in this test is untouched.
+    expect(calls[0]!.params.content).toMatch(/^System dispatch:/);
+    expect(calls[0]!.params.content).toContain("design.critique");
     expect(meta.task_id).toBe("019fa504-90f9-7f57-ac67-888093ef8e20");
     expect(meta.stage_id).toBe("019fa530-1111-7000-9000-000000000001");
     expect(meta.responsibility_key).toBe("design.critique");

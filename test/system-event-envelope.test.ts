@@ -36,7 +36,7 @@ import {
   type NotifyFn,
 } from "../src/attention.ts";
 import type { AttentionPayload } from "../src/suite-client.ts";
-import { FULL_ENVELOPE, fullEnvelope } from "./fixtures/index.ts";
+import { BARE_ENVELOPE, FULL_ENVELOPE, bareEnvelope, fullEnvelope } from "./fixtures/index.ts";
 
 function captureNotifications(): { notify: NotifyFn; calls: AttentionNotification[] } {
   const calls: AttentionNotification[] = [];
@@ -420,5 +420,233 @@ describe("system_event envelope — correlation ids resolve root-first", () => {
     expect(meta.stage_id).toBe("META-stage");
     expect(meta.space_id).toBe("background-space");
     expect(pinnedSpaces).toEqual([]);
+  });
+});
+
+// ── PART C — THE PROMPTLESS ENVELOPE GETS A LEGIBLE BODY ────────────────────
+//
+// THE ONE BEHAVIOUR CHANGE IN THIS TASK. Everything above pins existing
+// behaviour; this block changes it, and the two `toBe("")` assertions at
+// `test/emit-attention.test.ts:369` and `:601` moved with it.
+//
+// THE TICKET IS WRONG ABOUT THE SYMPTOM, measured rather than assumed. It says
+// a handler dereferencing `payload.message.<anything>` THROWS on the bare
+// envelope. At `eab9fb5` it does not: `src/attention.ts:89` is
+// `payload.message?.content ?? payload.signal?.prompt ?? ""`, optional-chained
+// on BOTH hops. That description fits the pre-fix handler still running in the
+// live checkout at `4691bdb`, not the code this branches from. Running the
+// bare fixture through `makeEmitAttention` at `eab9fb5` produced one
+// notification, no throw, and `content: ""`.
+//
+// The real defect is quieter and worse: the bare envelope SURVIVES the drop
+// guard (`meta.responsibility_key` is set, and that is correct — a
+// responsibility that fired and rendered nothing is a defect signal, not
+// noise) and is delivered as an EMPTY <channel> tag. That is the shape of the
+// 167 empty wakes over six days this whole task exists to prevent: the agent
+// wakes to nothing, and the guard that would have dropped it doesn't, PRECISELY
+// because the payload is well-formed.
+//
+// ROLLOUT IS NOT SELF-VERIFYING. The live bun processes serving this session
+// will not pick this up until a human runs `git pull` in
+// `/home/queen/sources/claude-code-suite-channel` and restarts the Claude Code
+// session — a session cannot restart its own MCP stdio server. Everything below
+// verifies in the worktree only.
+
+// Read off the fixture, annotated `string` so the comparisons stay RUNTIME
+// assertions. Left at the JSON import's literal type, `expect(a).toBe(b)` over
+// two identical string literals is checked by `tsc` and a fixture edit would
+// surface as a typecheck failure instead of a red test.
+const BARE_KEY: string = BARE_ENVELOPE.signal.responsibility_key;
+const BARE_TRIGGER: string = BARE_ENVELOPE.signal.trigger_kind;
+
+describe("system_event envelope — the promptless dispatch carries a legible body", () => {
+  // The premise. If a future edit "helpfully" adds a prompt to the capture,
+  // every assertion below would pass for the wrong reason.
+  test("the captured bare envelope really has no body, at any of the three keys", () => {
+    expect("message" in BARE_ENVELOPE).toBe(false);
+    expect("prompt" in BARE_ENVELOPE.signal).toBe(false);
+    expect("prompt" in BARE_ENVELOPE.signal.metadata).toBe(false);
+  });
+
+  // Call count is asserted EXPLICITLY, not implied. A throw inside the handler
+  // that a test framework swallowed would otherwise read as zero notifications
+  // and look indistinguishable from a deliberate drop.
+  test("the handler does not throw, and emits exactly one notification", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit(bareEnvelope());
+
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.method).toBe("notifications/claude/channel");
+  });
+
+  // THE ACTUAL PLACEHOLDER TEXT, asserted in full. `not.toBe("")` or a
+  // length check would pass on any garbage; the placeholder's entire job is to
+  // be LEGIBLE to the agent that receives it, so legibility is what is pinned.
+  test("the body names what fired, in full", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit(bareEnvelope());
+
+    const content = calls[0]!.params.content as string;
+    expect(content).toBe("System dispatch: memory.dreaming (cron) — no rendered prompt.");
+    // Restated against the fixture, so the literal above cannot drift from the
+    // payload it claims to describe.
+    expect(content).toContain(BARE_KEY);
+    expect(content).toContain(BARE_TRIGGER);
+    expect(content).not.toContain("undefined");
+    expect(content.trim().length).toBeGreaterThan(0);
+  });
+
+  // Paired with "body is a non-empty string" above, which requires the FULL
+  // envelope's content does NOT match this. The two assertions are each other's
+  // proof: collapse the promptless path onto the real-prompt path and exactly
+  // one of them goes red.
+  test("the body is marked as a placeholder, not passed off as a rendered prompt", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit(bareEnvelope());
+
+    expect(calls[0]!.params.content as string).toMatch(/^System dispatch:/);
+    expect(calls[0]!.params.content as string).toMatch(/no rendered prompt\.$/);
+  });
+
+  test("the responsibility metadata survives alongside the placeholder", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit(bareEnvelope());
+
+    const meta = calls[0]!.params.meta as Record<string, string>;
+    expect(meta.responsibility_key).toBe("memory.dreaming");
+    expect(meta.feature).toBe("memory");
+    expect(meta.trigger_kind).toBe("cron");
+    expect(meta.reason).toBe("system_event");
+  });
+
+  // Key ABSENCE via `in`, matching `test/emit-attention.test.ts:218-227`. The
+  // bare envelope has no space and no correlation ids at all; asserting they
+  // are ABSENT — not blank — stops a future `meta` change from inventing
+  // placeholders for IDS the way this stage invented one for the BODY.
+  test("no space is invented, and no correlation ids are invented either", async () => {
+    const { notify, calls, pinnedSpaces } = captureWithPermissionSpy();
+    const emit = makeEmitAttention({
+      notify,
+      setActivePermissionSpace: (sid) => pinnedSpaces.push(sid),
+    });
+
+    await emit(bareEnvelope());
+
+    const meta = calls[0]!.params.meta as Record<string, string>;
+    expect("space_id" in meta).toBe(false);
+    expect("task_id" in meta).toBe(false);
+    expect("plan_id" in meta).toBe(false);
+    expect(pinnedSpaces).toEqual([]);
+  });
+
+  // THE REGRESSION GUARD, and the reason the substitution sits AFTER the drop
+  // guard rather than next to the `text` assignment. Computed before the guard,
+  // the placeholder would make `text.trim()` non-empty for EVERY payload, the
+  // guard's `!text.trim()` arm would become dead code, and every presence sweep
+  // and reconnect echo would come back as a "System dispatch:" wake. This is
+  // the single most plausible way to get the change wrong.
+  //
+  // Mirrors `test/emit-attention.test.ts:607-618`, restated here against the
+  // placeholder specifically.
+  test("a genuinely content-free attention still drops — the guard is not dead code", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    await emit({ signal: { reason: "system_event", metadata: {} } });
+
+    expect(calls.length).toBe(0);
+  });
+});
+
+// DEGRADATION. The captured fixture carries both `responsibility_key` and
+// `trigger_kind`; core omits keys it cannot render (`maybe_put(map, _key, nil),
+// do: map`), so neither is guaranteed. Each rung is asserted for the text it
+// actually produces, and every one of them for the absence of the literal
+// "undefined" — emitting that string to an agent is worse than the empty tag,
+// because it looks like a bug in the dispatch rather than an absence in it.
+describe("system_event envelope — the placeholder degrades without inventing text", () => {
+  async function bodyFor(signal: AttentionPayload["signal"]): Promise<string> {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+    await emit({ signal });
+    expect(calls.length).toBe(1);
+    return calls[0]!.params.content as string;
+  }
+
+  test("without trigger_kind, it still names the responsibility", async () => {
+    const body = await bodyFor({
+      reason: "system_event",
+      responsibility_key: "memory.sweep",
+      metadata: {},
+    });
+
+    expect(body).toBe("System dispatch: memory.sweep — no rendered prompt.");
+    expect(body).not.toContain("undefined");
+  });
+
+  // No responsibility at all, but a correlation id — so the guard keeps it and
+  // there is still something true to say about why it fired.
+  test("without a responsibility, it falls back to the reason", async () => {
+    const body = await bodyFor({
+      reason: "system_event",
+      metadata: { task_id: "019fa504-90f9-7f57-ac67-888093ef8e20" },
+    });
+
+    expect(body).toBe("System dispatch: system_event — no rendered prompt.");
+    expect(body).not.toContain("undefined");
+  });
+
+  // The bottom rung: nothing to name at all. Kept only because a message_id
+  // makes it correlatable.
+  //
+  // Reached via a BLANK reason, not a missing one, and that is a fact `tsc`
+  // established rather than a stylistic choice: `AttentionPayload["signal"]`
+  // declares `reason` as REQUIRED, so omitting it is a compile error and this
+  // rung is unreachable from a well-typed payload. A blank one is the real
+  // runtime shape — `meta.reason` is only assigned when truthy
+  // (`src/attention.ts`), so a blank reason never reaches the placeholder.
+  test("with nothing to name, it says so rather than emitting undefined", async () => {
+    const body = await bodyFor({
+      reason: "",
+      message_id: "019fa504-0000-7000-9000-000000000001",
+    });
+
+    expect(body).toBe("System dispatch: unidentified responsibility — no rendered prompt.");
+    expect(body).not.toContain("undefined");
+  });
+
+  // A whitespace-only body is an empty body. `text` would be truthy, so a
+  // substitution keyed on `text` rather than `text.trim()` would ship a tag
+  // containing a single newline — visually identical to the defect.
+  test("a whitespace-only prompt is treated as no prompt", async () => {
+    const body = await bodyFor({
+      reason: "system_event",
+      responsibility_key: "memory.dreaming",
+      trigger_kind: "cron",
+      prompt: "   \n  ",
+    });
+
+    expect(body).toBe("System dispatch: memory.dreaming (cron) — no rendered prompt.");
+  });
+
+  // The other side of the same line: a real body is never touched.
+  test("a rendered prompt is never replaced", async () => {
+    const body = await bodyFor({
+      reason: "system_event",
+      responsibility_key: "memory.dreaming",
+      trigger_kind: "cron",
+      prompt: "Do the actual work described here.",
+    });
+
+    expect(body).toBe("Do the actual work described here.");
+    expect(body).not.toMatch(/^System dispatch:/);
   });
 });
