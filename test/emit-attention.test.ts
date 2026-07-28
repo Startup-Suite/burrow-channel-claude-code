@@ -633,3 +633,84 @@ describe("emitAttention — against core's build_system_event_signal/2", () => {
     expect(calls.length).toBe(0);
   });
 });
+
+// ── The envelope, both directions, in one run ──────────────────────────────
+//
+// This is the block the `system_event_prompt` capability actually names. The
+// two attention envelopes core emits are asymmetric, and stage 1 of task
+// 019fa56b pinned that asymmetry server-side so a refactor cannot quietly
+// normalise it away:
+//
+//   * `task_router.ex:1388` and `agent_responder.ex:243` carry the body at
+//     `message.content`.
+//   * `agent_responder.ex:424` (`broadcast_system_event/3`) carries ONLY
+//     `signal` — `Map.keys(payload) == [:signal]` — with the rendered prompt
+//     at `signal.prompt`.
+//
+// A bridge reading `payload.message?.content ?? ""` renders the first two
+// perfectly and drops the third entirely. That is why "dalton received a task
+// dispatch with a full body" proves nothing about that runtime's system_event
+// handling — and why the fix has to be discriminated by a declared capability
+// rather than inferred from traffic.
+//
+// Both directions are asserted against SENTINEL TEXT (not `content !== ""`)
+// in a SINGLE test through a SINGLE emit function, so neither half can pass
+// on a dispatch that never fired, and a regression in either direction is
+// caught. Verified by perturbing `attention.ts:89`:
+//
+//   * `message?.content ?? ""`   (the literal pre-fix line, still live at
+//     `4691bdb` `src/index.ts:256`)  -> direction 1 fails, "" vs SENTINEL-WAKE
+//   * `signal?.prompt ?? ""`     (message path dropped)
+//                                    -> direction 2 fails, "" vs SENTINEL-TASK
+//
+// A third perturbation — REVERSING the precedence to
+// `signal?.prompt ?? message?.content ?? ""` — stays green, and that is
+// correct rather than a hole: no core emit path puts a body in BOTH places,
+// so the two orderings are behaviourally identical against every payload core
+// actually sends. A test manufacturing a both-populated payload to fail it
+// would be pinning a shape the server does not produce.
+describe("emitAttention — the system_event envelope, both directions", () => {
+  const WAKE = "SENTINEL-WAKE-7f3c1a90";
+  const TASK = "SENTINEL-TASK-2b8e40d5";
+
+  test("a signal-only payload renders signal.prompt, and a message payload still renders message.content", async () => {
+    const { notify, calls } = captureNotifications();
+    const emit = makeEmitAttention({ notify });
+
+    // Direction 1 — the exact `broadcast_system_event/3` shape: `signal` and
+    // nothing else. No `message` key at all, not even an empty one.
+    const systemEvent: AttentionPayload = {
+      signal: {
+        reason: "system_event",
+        prompt: WAKE,
+        responsibility_key: "design.task_direction",
+      },
+    };
+    expect(Object.keys(systemEvent)).toEqual(["signal"]);
+    await emit(systemEvent);
+
+    // Direction 2 — the `task_router.ex:1385-1389` shape, same emit function.
+    await emit({
+      signal: { reason: "task_assigned", task_id: "task-019fa56b", task_status: "in_progress" },
+      message: { content: TASK, author: "TaskRouter" },
+    });
+
+    expect(calls.length).toBe(2);
+    expect(calls[0]!.params.content).toBe(WAKE);
+    expect(calls[1]!.params.content).toBe(TASK);
+
+    // The system_event tag has to say what asked, or it arrives as an
+    // unattributable instruction.
+    const wakeMeta = calls[0]!.params.meta as Record<string, string>;
+    expect(wakeMeta.reason).toBe("system_event");
+    expect(wakeMeta.responsibility_key).toBe("design.task_direction");
+  });
+
+  // DELIBERATELY NOT PINNED HERE: `attention.ts:89` uses `??`, not `||`, so a
+  // payload carrying BOTH an empty `message.content` and a real
+  // `signal.prompt` would render empty. That shape is not reachable from core
+  // today — stage 1 of 019fa56b pinned `Map.keys(payload) == [:signal]` on the
+  // system_event path, so the two never co-occur — and swapping the operator
+  // is a behavior change outside this stage's scope. Noted so the next reader
+  // does not have to rediscover it.
+});

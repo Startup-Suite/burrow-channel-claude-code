@@ -9,9 +9,44 @@ import { resetHistoryTracking } from "./attention.ts";
 // connection — dispatch should suggest spawning a subagent for parallelism)
 // from OpenClaw runtimes (which can host many agents per connection).
 // Suite-side treats missing client_info as "unknown" (forward compatible).
+//
+// ── `features` ─────────────────────────────────────────────────────────────
+//
+// A declared capability set: what THIS build can do, not what version it calls
+// itself. Suite persists it on the runtime row (`runtime_channel.ex`
+// `resolve_client_info/1`) and reads it back through
+// `AgentRuntime.client_supports?/2`.
+//
+// WHY NOT `version`: the field directly above is derived from `package.json`,
+// and `package.json` is not a function of the code that changed. Commit
+// `7288017` — the fix that made responsibility dispatches render at all — did
+// not bump it, so every runtime in the field reported `0.2.0` whether it was
+// fixed or broken. The version discriminated nothing precisely when it was
+// needed. This list is declared HERE, in the same module that types
+// `AttentionPayload.signal.prompt` and pushes `client_info` on join below, so
+// the claim ships in the same build as the behaviour it claims and cannot
+// drift from it. It is deliberately NOT derived from `package.json`.
+//
+// Semantics on the server side, worth knowing before adding an entry:
+//   - matching is EXACT. `system_event_prompt_v2`, `SYSTEM_EVENT_PROMPT` and a
+//     space-padded variant are all rejected, so these strings are a wire
+//     contract — never "tidy" one.
+//   - fail-closed. Absence reads as "not proven", never as "broken": it covers
+//     both an old build and a new build that has not reconnected yet.
+//   - the persisted set is REPLACED on every join, not merged, so a downgrade
+//     to a build without this line correctly revokes the claim.
+//
+// `system_event_prompt`: this build reads a responsibility dispatch's body
+// from `signal.prompt` when the payload carries no `message` key at all
+// (`attention.ts`, the `payload.message?.content ?? payload.signal?.prompt`
+// fallback). Builds before `7288017` read `message.content` alone and
+// delivered every one of those as an empty <channel> tag.
+export const CLIENT_FEATURES = ["system_event_prompt"] as const;
+
 export const CLIENT_INFO = {
   product: "claude_channel" as const,
   version: (pkg as { version?: string }).version ?? "unknown",
+  features: CLIENT_FEATURES,
 };
 
 export interface SuiteConfig {
