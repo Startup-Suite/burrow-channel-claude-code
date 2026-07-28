@@ -14,18 +14,96 @@
 //
 // WHAT THIS FILE CANNOT DO — stated up front so nobody mistakes green for
 // coverage it does not have. The captured envelope populates BOTH
-// `message.content` and `signal.prompt`, byte-equal, so perturbing
-// `src/attention.ts:89` to read either single source leaves every assertion
-// here green. This file pins the OUTCOME and the server CONTRACT; the fallback
-// ORDERING is pinned by the signal-only bare fixture and by the divergence
-// probes in the sibling stages. Manufacturing a both-populated-but-different
-// payload to force a red here would pin a shape core never sends.
+// `message.content` and `signal.prompt`, byte-equal, so NO FIXTURE-DRIVEN
+// ASSERTION IN THIS FILE can distinguish a handler that reads one from a
+// handler that reads the other. The fixture pins the OUTCOME and the server
+// CONTRACT; the fallback ORDERING is pinned by the signal-only bare fixture,
+// by the synthetic degradation cases at the bottom of this file, and by the
+// sentinel test on `task/019fa56b-system-event-capability` (PR #16).
+// Manufacturing a both-populated-but-different payload to force a red here
+// would pin a shape core never sends. Measured, both directions, below.
 //
 // AND: the fixture's prompt is ABRIDGED (see `test/fixtures/index.ts` — the
 // real body was 13,325 bytes and the capture elides its middle with a literal
 // `[…]`). Nothing below asserts a body LENGTH or a substring of the body, only
 // byte-identity against the fixture object and cross-key equality. An assertion
 // on size would be an assertion about the elision.
+//
+// ── THE PERTURBATION MATRIX ────────────────────────────────────────────────
+//
+// A fixture test that passes against a broken handler is worse than none.
+// Every row below was APPLIED to `src/attention.ts` in this worktree, run, and
+// REVERTED, with `git status` confirming a clean tree after each. Failure text
+// is transcribed from the run, not predicted. Format follows PR #16's body.
+//
+// MEASURED BASELINES. `origin/main` (eab9fb5): 41 pass, 0 fail, 127 expect(),
+// 4 files. This branch after stages 1–4: 69 pass, 0 fail, 229 expect(),
+// 5 files. `tsc --noEmit` clean at both.
+//
+// TWO DIFFERENT INSTRUMENTS, and each row says which. `bun test` strips types
+// and never typechecks, so a perturbation that deletes or renames a declared
+// field fails at COMPILE time and would still run green under `bun test`
+// alone. Stage 3 widened `AttentionPayload["signal"]` precisely so the root
+// copies of `plan_id`/`stage_id`/`project_id` were readable; perturbing that
+// widening is a `tsc` finding, not an assert finding. Rows 1 and 2 below are
+// caught by BOTH, and that is worth knowing rather than assuming.
+//
+// | # | perturbation | site | instrument | observed |
+// |---|---|---|---|---|
+// | 1 | `text` reads keys the payload genuinely lacks: `payload.message?.body ?? payload.signal?.rendered_prompt ?? ""` | `src/attention.ts:120` | `tsc` AND test | `tsc` TS2339 ×2 (`Property 'body' does not exist…`, `Property 'rendered_prompt' does not exist…`). `bun test` 55 pass / **14 fail**; byte-identity red at `:187` with a real diff — `Expected: "You are the Architect on the Suite plan-review path…"` / `Received: "System dispatch: architecture.review_plan (event_topic) — no rendered prompt."` |
+// | 2 | whitelist key drift: `"plan_id"` → `"plan"` | `src/attention.ts:60` | `tsc` AND test | `tsc` TS7053 (`Property 'plan' does not exist…`). 62 pass / **7 fail**; `:231` `expect(meta.plan_id).toBeTruthy()` → `Received: undefined`. The preceding line, `expect(FULL_ENVELOPE.signal.plan_id).toBeTruthy()`, still PASSES — which is what proves the red is the handler's and not the fixture's. |
+// | 3 | delete the `responsibility_key` forward | `src/attention.ts:146-148` | test | 56 pass / **13 fail**. `:252` `Expected: "architecture.review_plan"` / `Received: undefined`, and the bare envelope no longer survives the drop guard at all — `:558` `Expected: 1` / `Received: 0`. |
+// | 4 | permission pin falls back to metadata: `payload.signal?.space_id ?? (payload.signal?.metadata?.space_id as string \| undefined)` | `src/attention.ts:111` | test | 66 pass / **3 fail**. `:364` and `:500` both `Received: [ "background-space" ]` against `Expected: []`. This is the live-approval-misrouting change, and it is also what proves the `pinnedSpaces` spy is LIVE rather than an array nothing ever writes to — see the note below. |
+// | 5 | resolution loop reads metadata-first | `src/attention.ts:192-198` | test | 68 pass / **1 fail**. `:422` `Expected: "ROOT-plan"` / `Received: "META-plan"`. |
+// | 6 | revert the placeholder — `const body = text` | `src/attention.ts:243` | test | 61 pass / **8 fail**. `:572` `Expected: "System dispatch: memory.dreaming (cron) — no rendered prompt."` / `Received: ""`; `:591` `not.toMatch(/^System dispatch:/)` inverse red with `Received: ""`. |
+// | 7 | substitute the placeholder BEFORE the drop guard instead of after | `src/attention.ts:222` | test | 64 pass / **5 fail**. `:643` `Expected: 0` / `Received: 1` — the guard's `!text.trim()` arm becomes dead code and every presence sweep returns as a `System dispatch:` wake. Invisible to every other assertion in this file. |
+//
+// ROW 6 IS ROW 7's MIRROR. Row 6 collapses the promptless path onto the
+// real-prompt path and `:591` goes red; the full envelope's `:171`
+// (`not.toMatch(/^System dispatch:/)`) is what goes red under row 1 when the
+// collapse runs the other way. The two assertions are each other's proof.
+//
+// THE HONEST NEGATIVE — NOT PAPERED OVER.
+//
+// | perturbation of `src/attention.ts:120` | this file alone | whole suite |
+// |---|---|---|
+// | `payload.signal?.prompt ?? ""` — message path dropped | **28 pass, 0 fail — GREEN** | 60 pass / 9 fail, all of them pre-existing chat-path tests in `emit-attention.test.ts`. Nothing in THIS file notices. |
+// | `payload.message?.content ?? ""` — the literal pre-fix line, the ticket's actual bug | 27 pass / 1 fail | 66 pass / 3 fail |
+//
+// Read that carefully, because it corrects this file's own earlier claim. The
+// captured envelope carries the prompt at `message.content` AND `signal.prompt`
+// byte-equal, so EVERY FIXTURE-DRIVEN ASSERTION ABOVE STAYS GREEN UNDER BOTH
+// SINGLE-SOURCE READS. That much is unchanged and is the boundary this file
+// exists to state. What changed is that the file is no longer entirely blind to
+// the pre-fix read: the single red is `a rendered prompt is never replaced`
+// (`:727`), a SYNTHETIC signal-only payload added in stage 4, not the fixture —
+// `Expected: "Do the actual work described here."` / `Received: "System
+// dispatch: memory.dreaming (cron) — no rendered prompt."`. The complementary
+// read, `signal.prompt` only, is caught by NOTHING here at all.
+//
+// So: the fixture protects the CONTRACT (both keys present, byte-equal, all
+// four ids surviving, no invented space). The ORDERING is protected by
+// synthetic single-source payloads and by PR #16's sentinel test. A
+// both-populated-but-different envelope would force a green box at the cost of
+// pinning a shape core does not send — PR #16 made the same call for its
+// reversed-precedence row and it is the right one. An honest "this cannot catch
+// X, here is what does" beats a green box; a signal that exists and does not
+// reach what reads it is the exact defect class this task is the fourth
+// instance of.
+//
+// ANTI-VACUITY NOTE ON THE HARNESS ITSELF. Every `pinnedSpaces` assertion in
+// this file is NEGATIVE (`toEqual([])`), which is the shape that passes when
+// the callback is never wired and no pin could ever have been recorded. Row 4
+// discharges that: under it the same spy collects `["background-space"]`, so
+// the empty arrays elsewhere are a measured absence rather than an inert one.
+// `captureWithPermissionSpy()` deliberately does NOT wire the callback itself —
+// each call site passes `setActivePermissionSpace` explicitly, so a test that
+// forgets it fails loudly rather than reading as a green negative.
+//
+// `tsc` DOES NOT FLAG DEAD CODE HERE: under row 6, `describeBodylessDispatch`
+// becomes unreferenced and `tsc --noEmit` still exits 0 (`noUnusedLocals` is
+// not enabled in `tsconfig.json`). Do not rely on the typechecker to notice an
+// orphaned helper.
 
 import { beforeEach, describe, expect, test } from "bun:test";
 
