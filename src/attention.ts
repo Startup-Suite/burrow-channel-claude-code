@@ -118,7 +118,8 @@ export function makeEmitAttention(opts: EmitAttentionOptions): (payload: Attenti
     if (payload.signal?.feature) meta.feature = payload.signal.feature;
     if (payload.signal?.trigger_kind) meta.trigger_kind = payload.signal.trigger_kind;
 
-    // Correlation ids, pulled out of `signal.metadata` one key at a time.
+    // Correlation ids, resolved ROOT-FIRST with `signal.metadata` as fallback,
+    // one key at a time.
     //
     // A WHITELIST, deliberately — never spread the map. It also holds
     // `prompt` (the entire rendered body, already the tag's content) and on
@@ -127,10 +128,41 @@ export function makeEmitAttention(opts: EmitAttentionOptions): (payload: Attenti
     // `@native_trigger_scalar_keys` on the server side (`router.ex:1447`).
     //
     // Top level wins: chat attentions set `signal.task_id` directly, and a
-    // value the server put at the top is the more specific statement.
+    // value the server put at the top is the more specific statement. That
+    // claim used to hold for `task_id` ALONE — seeded above from the root —
+    // while `plan_id`, `stage_id` and `project_id` resolved from metadata,
+    // because `AttentionPayload["signal"]` did not declare them at the root
+    // and this loop therefore could not see the copies core was already
+    // sending. Behaviour-preserving for every payload core emits today (both
+    // copies are byte-equal), and it degrades gracefully if metadata is ever
+    // slimmed. Pinned by the divergence probe in
+    // `test/system-event-envelope.test.ts`, which is the only construction
+    // that can distinguish the two sources.
+    //
+    // `space_id` RIDES THIS LIST AS A REPLY TARGET ONLY. Do not "make it
+    // consistent" with the other four: its root value is already seeded above
+    // and the permission pin at the top of this function reads the top level
+    // and nothing else, on purpose. Resolving the PERMISSION space from
+    // metadata would silently move a live approval prompt to a space no human
+    // is watching — an invisible failure, since the prompt would still look
+    // delivered. Pinned by "the space_id asymmetry" in the same test file.
+    //
+    // The sibling `openclaw-suite-channel` bridge resolves these from the root
+    // EXCLUSIVELY, with no metadata fallback. That divergence is deliberate,
+    // not drift: its inbound path reads root everywhere and its metadata also
+    // carries the rendered prompt. Both rulings are correct for their own
+    // repo; do not harmonise them.
     const signalMetadata = payload.signal?.metadata ?? {};
     for (const key of METADATA_SCALAR_KEYS) {
       if (meta[key]) continue;
+      // `typeof` guard on both sources, not just `??`: a root key present but
+      // BLANK must fall through to metadata rather than win and then be
+      // discarded, which would drop an id that was available all along.
+      const rootValue = payload.signal?.[key];
+      if (typeof rootValue === "string" && rootValue) {
+        meta[key] = rootValue;
+        continue;
+      }
       const value = signalMetadata[key];
       if (typeof value === "string" && value) meta[key] = value;
     }
