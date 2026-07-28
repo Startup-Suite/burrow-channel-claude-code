@@ -14,6 +14,7 @@
   },
   "scripts": {
     "start": "bun src/index.ts",
+    "test": "bun test",
     "typecheck": "tsc --noEmit",
     "test:client-info-handshake": "bun test test/client-info-handshake.test.ts"
   },

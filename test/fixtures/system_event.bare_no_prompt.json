@@ -1,0 +1,17 @@
+{
+  "signal": {
+    "reason": "system_event",
+    "responsibility_key": "memory.dreaming",
+    "feature": "memory",
+    "trigger_kind": "cron",
+    "agent_id": "335bf801-d5cb-4819-a1ca-e8f56b22d078",
+    "agent_slug": "higgins",
+    "metadata": {
+      "responsibility_key": "memory.dreaming",
+      "feature": "memory",
+      "trigger_kind": "cron",
+      "agent_id": "335bf801-d5cb-4819-a1ca-e8f56b22d078",
+      "agent_slug": "higgins"
+    }
+  }
+}
