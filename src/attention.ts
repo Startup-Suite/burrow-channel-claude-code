@@ -64,6 +64,37 @@ export const METADATA_SCALAR_KEYS = [
 ] as const;
 
 /**
+ * A one-line body for a dispatch that survived the drop guard carrying no
+ * rendered prompt.
+ *
+ * A responsibility whose feature has no `build_prompt/1` fires with no
+ * `message`, no `signal.prompt` and no `metadata.prompt` — core's
+ * `maybe_put(map, _key, nil), do: map` omits those keys rather than blanking
+ * them. Before this existed such a dispatch reached the agent as an EMPTY
+ * `<channel>` tag: indistinguishable from housekeeping noise, with nothing to
+ * act on and nothing to report. That is the shape of the 167 empty wakes over
+ * six days that #15 and this function exist to eliminate.
+ *
+ * The text NAMES WHAT FIRED, so the receiving agent can decide whether the
+ * absence of a prompt is itself the story (it usually is — a responsibility
+ * that fired and rendered nothing is a defect signal). It is also deliberately
+ * marked: `test/system-event-envelope.test.ts` asserts the placeholder DOES
+ * match `/^System dispatch:/` and that a real rendered prompt does NOT, so the
+ * two paths can never be collapsed without one of the two going red.
+ *
+ * Degrades one rung at a time and NEVER interpolates a missing value: emitting
+ * the literal string "undefined" to an agent is worse than the empty tag,
+ * because it reads as a bug in the dispatch rather than an absence in it.
+ * `meta` only ever holds keys that were present and truthy (see the assignments
+ * in `emitAttention`), so `||` here is a presence test, not a blank-coercion.
+ */
+function describeBodylessDispatch(meta: Record<string, string>): string {
+  const what = meta.responsibility_key || meta.reason || "unidentified responsibility";
+  const how = meta.trigger_kind ? ` (${meta.trigger_kind})` : "";
+  return `System dispatch: ${what}${how} — no rendered prompt.`;
+}
+
+/**
  * Build an `emitAttention` function bound to the given notifier. Factored out
  * of `index.ts` so the per-space history injection logic is testable without
  * booting the MCP server / Phoenix socket.
@@ -118,7 +149,8 @@ export function makeEmitAttention(opts: EmitAttentionOptions): (payload: Attenti
     if (payload.signal?.feature) meta.feature = payload.signal.feature;
     if (payload.signal?.trigger_kind) meta.trigger_kind = payload.signal.trigger_kind;
 
-    // Correlation ids, pulled out of `signal.metadata` one key at a time.
+    // Correlation ids, resolved ROOT-FIRST with `signal.metadata` as fallback,
+    // one key at a time.
     //
     // A WHITELIST, deliberately — never spread the map. It also holds
     // `prompt` (the entire rendered body, already the tag's content) and on
@@ -127,10 +159,41 @@ export function makeEmitAttention(opts: EmitAttentionOptions): (payload: Attenti
     // `@native_trigger_scalar_keys` on the server side (`router.ex:1447`).
     //
     // Top level wins: chat attentions set `signal.task_id` directly, and a
-    // value the server put at the top is the more specific statement.
+    // value the server put at the top is the more specific statement. That
+    // claim used to hold for `task_id` ALONE — seeded above from the root —
+    // while `plan_id`, `stage_id` and `project_id` resolved from metadata,
+    // because `AttentionPayload["signal"]` did not declare them at the root
+    // and this loop therefore could not see the copies core was already
+    // sending. Behaviour-preserving for every payload core emits today (both
+    // copies are byte-equal), and it degrades gracefully if metadata is ever
+    // slimmed. Pinned by the divergence probe in
+    // `test/system-event-envelope.test.ts`, which is the only construction
+    // that can distinguish the two sources.
+    //
+    // `space_id` RIDES THIS LIST AS A REPLY TARGET ONLY. Do not "make it
+    // consistent" with the other four: its root value is already seeded above
+    // and the permission pin at the top of this function reads the top level
+    // and nothing else, on purpose. Resolving the PERMISSION space from
+    // metadata would silently move a live approval prompt to a space no human
+    // is watching — an invisible failure, since the prompt would still look
+    // delivered. Pinned by "the space_id asymmetry" in the same test file.
+    //
+    // The sibling `openclaw-suite-channel` bridge resolves these from the root
+    // EXCLUSIVELY, with no metadata fallback. That divergence is deliberate,
+    // not drift: its inbound path reads root everywhere and its metadata also
+    // carries the rendered prompt. Both rulings are correct for their own
+    // repo; do not harmonise them.
     const signalMetadata = payload.signal?.metadata ?? {};
     for (const key of METADATA_SCALAR_KEYS) {
       if (meta[key]) continue;
+      // `typeof` guard on both sources, not just `??`: a root key present but
+      // BLANK must fall through to metadata rather than win and then be
+      // discarded, which would drop an id that was available all along.
+      const rootValue = payload.signal?.[key];
+      if (typeof rootValue === "string" && rootValue) {
+        meta[key] = rootValue;
+        continue;
+      }
       const value = signalMetadata[key];
       if (typeof value === "string" && value) meta[key] = value;
     }
@@ -163,7 +226,23 @@ export function makeEmitAttention(opts: EmitAttentionOptions): (payload: Attenti
       return;
     }
 
-    let content = text;
+    // The attention survived the guard but rendered no body. Substitute a
+    // placeholder that names what fired, so the agent gets a legible statement
+    // instead of an empty <channel> tag. Whitespace-only counts as empty:
+    // keying this on `text` rather than `text.trim()` would ship a tag holding
+    // a single newline, which is the defect wearing a different hat.
+    //
+    // PLACEMENT IS LOAD-BEARING — this runs AFTER the drop guard above, never
+    // before it, and it must stay there. Computed earlier, `text.trim()` would
+    // be non-empty for EVERY payload, the guard's `!text.trim()` arm would
+    // become dead code, and every presence sweep and reconnect echo the guard
+    // is entitled to drop would come back as a "System dispatch:" wake. The
+    // guard decides WHAT REACHES the agent; this decides only how the survivors
+    // READ. Pinned by "a genuinely content-free attention still drops" in
+    // `test/system-event-envelope.test.ts`.
+    const body = text.trim() ? text : describeBodylessDispatch(meta);
+
+    let content = body;
     if (
       spaceId &&
       !historyEmittedForSpace.has(spaceId) &&
@@ -173,7 +252,7 @@ export function makeEmitAttention(opts: EmitAttentionOptions): (payload: Attenti
       const recent = payload.history.slice(-MAX_HISTORY_TURNS);
       const block = recent.map((h) => `${h.author}: ${h.content}`).join("\n");
       content =
-        `Recent context (last ${recent.length} turns in this space):\n${block}\n\n---\n\nCurrent message:\n${text}`;
+        `Recent context (last ${recent.length} turns in this space):\n${block}\n\n---\n\nCurrent message:\n${body}`;
       historyEmittedForSpace.add(spaceId);
     }
 

@@ -27,6 +27,17 @@ export interface AttentionPayload {
     reason: string;
     space_id?: string;
     task_id?: string;
+    // Core lifts these to the root alongside `prompt` — `agent_responder.ex`
+    // (`build_system_event_signal/2`) copies the responsibility's correlation
+    // ids out of `metadata` so a federated runtime can read them without
+    // digging. Both copies are sent, byte-equal; the root is the deliberate
+    // named interface and `metadata` is the bag. Undeclared until now, which
+    // is why `attention.ts` could only ever read the metadata copy of these
+    // three while reading the root copy of `task_id` — see the resolution
+    // loop's comment there.
+    plan_id?: string;
+    stage_id?: string;
+    project_id?: string;
     task_status?: string;
     message_id?: string;
     // ── Responsibility dispatches (`reason: "system_event"`) ──────────────

@@ -1,0 +1,40 @@
+# Advisory CI.
+#
+# This repository has no branch protection and no required status checks
+# (GET /repos/Startup-Suite/claude-code-suite-channel/branches/main/protection
+# returned 404 "Branch not protected" when this file was added). A red run here
+# therefore REPORTS a failure; it does not block a merge. Turning these checks
+# into a merge gate is a repository-settings change that needs admin rights and
+# has to be done by a human in GitHub's UI. Until that happens, do not describe
+# anything merged into this repo as "CI-gated".
+#
+# Deliberately absent: path filters, `continue-on-error`, and step-level `if:`.
+# Each of those can turn this job green while running nothing, which is the
+# exact failure mode the tests below exist to catch.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: bun test + typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Pinned to the bun that produced the recorded test evidence. Bump
+          # deliberately, in a commit of its own, so a bun regression is
+          # distinguishable from a source regression.
+          bun-version: 1.3.13
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun run typecheck
