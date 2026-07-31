@@ -205,10 +205,14 @@ export function makeEmitAttention(opts: EmitAttentionOptions): (payload: Attenti
     // build_system_event_signal/2`. Without these a dispatch says "do this"
     // with no indication of what asked or why.
     //
-    // WAS a line pin (`agent_responder.ex:485-487`) and it had rotted: those
-    // lines now sit inside an unrelated comment block, and the lift is in the
-    // function named above. A line number records no expectation, so nothing
-    // could notice; a function name either is in the file or is not.
+    // WAS a line pin into `agent_responder.ex` at lines 485-487, and it had
+    // rotted: those lines now sit inside an unrelated comment block, and the
+    // lift is in the function named above. A line number records no
+    // expectation, so nothing could notice; a function name either is in the
+    // file or is not. (Written out longhand rather than as `file:line`, because
+    // the audit bans that shape ANYWHERE in a record — including in an account
+    // of a pin that has already been removed. The history is the point; the
+    // followable-looking string is not.)
     if (payload.signal?.responsibility_key) {
       meta.responsibility_key = payload.signal.responsibility_key;
     }
@@ -225,8 +229,8 @@ export function makeEmitAttention(opts: EmitAttentionOptions): (payload: Attenti
     // `@native_trigger_scalar_keys` on the server side —
     // `core:apps/platform/lib/platform/responsibilities/router.ex §
     // native_trigger_scalar_keys/0` (the whitelist itself; the write is
-    // `put_trigger_scalars/2` just below it). Was pinned as `router.ex:1447`,
-    // which no longer lands on either.
+    // `put_trigger_scalars/2` just below it). Was pinned into `router.ex` at
+    // line 1447, which no longer lands on either.
     //
     // Top level wins: chat attentions set `signal.task_id` directly, and a
     // value the server put at the top is the more specific statement. That

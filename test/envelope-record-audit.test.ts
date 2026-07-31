@@ -83,9 +83,18 @@
 // clean tree between rows.
 //
 // MEASURED BASELINES, whole suite. `origin/main` (`4edd170`): 72 pass, 0 fail,
-// 244 expect(), 5 files. This branch: 81 pass, 0 fail, 257 expect(), 6 files.
-// `tsc --noEmit` exits 0 at both. Assertions were ADDED; none were removed,
-// relaxed or deleted.
+// 244 expect(), 5 files. This branch at stage 4: 81 pass, 0 fail, 257 expect(),
+// 6 files. This branch after the pin-ban widening below: 82 pass, 0 fail, 258
+// expect(), 6 files. `tsc --noEmit` exits 0 at all three. Assertions were
+// ADDED; none were removed, relaxed or deleted.
+//
+// WHY THIS FILE MAY CONTAIN THE SHAPE IT BANS. The header and the failure
+// messages below quote `agent_responder.ex:485-487` and `router.ex:1447`
+// verbatim, which `BARE_LINE_PIN_RE` would reject in a record. This file is not
+// a record and is not in its own corpus — the walk is `src/**/*.ts`, and the
+// specimens are quoted here AS specimens, the way a test fixture may contain
+// the malformed input it tests. Records get the ban; the evidence locker does
+// not.
 //
 // Every mutation below is applied to the RECORD in `src/attention.ts`.
 //
@@ -97,6 +106,25 @@
 // | 4 | delete the `WHAT WOULD RETIRE THIS:` line | 80 pass / **1 fail** — `the record carries all four clause labels`: ``src/attention.ts — is missing `WHAT WOULD RETIRE THIS:` ``. |
 // | 5 | `core:` → `cores:` on the `1/3` reference | 80 pass / **1 fail** — `every reference names a known repo and a source-shaped path`. THE DISCRIMINATION CHECK, and it holds: the non-vacuity control PASSES, because it asks whether ANY `core:` reference parsed and the `2/3` one still does. **FIRST RUN OF THIS ROW FAILED TWO TESTS, AND THE SECOND FAILURE WAS THIS FILE'S BUG, not the mutation's finding.** `every reference is cross-repo` was written as `repo !== "core"`, so a broken repo token read as "a reference into THIS repo" — it would also have misreported a legitimate `openclaw-suite-channel:` reference. Fixed to test the local repo token by name; the row above is the re-run. Recorded rather than quietly repaired: a control that fires for the wrong reason is a finding about the audit. |
 // | 6 | rename the marker (`ENVELOPE-…` → `DECISION-NOTE`) | 80 pass / **1 fail**, and `the scan is not vacuous` is the ONLY failure: `the corpus walk found 0 record file(s) under \`src/\``. Every other assertion ran against an empty corpus and passed — 253 expect() calls instead of 257, because the vacuity test aborts at its first assertion. That is the entire reason the corpus count lives inside this test rather than beside it. |
+//
+// ── ROWS 7-10: THE PIN BAN WAS BANNING THE WRONG SHAPE ─────────────────────
+//
+// Row 3 above says the pin check "scans every CITATION line rather than the two
+// sibling-reference lines alone", and treats that as the wide scope. IT WAS NOT
+// WIDE ENOUGH, and the row said so without noticing: `CITATION_RE` requires a
+// `<repo>:` prefix, so the ban only ever applied to prefixed pins. Every pin
+// this task actually removed was BARE. A reviewer demonstrated the escape —
+// appending `(see agent_responder.ex:485)` inside the record scored a full
+// green where it should have failed. Rows 7-10 are the fix, measured the same
+// way. Row 7 is the widening observed FAILING before anything was rewritten;
+// a widened check never seen red is a widened check nobody can vouch for.
+//
+// | # | mutation | observed |
+// |---|---|---|
+// | 7 | none — widen the ban (`BARE_LINE_PIN_RE` + the new test), leave the record's two live pins in place | 81 pass / **1 fail**, the new test alone, naming both survivors: ``src/attention.ts (line 208) — line pin `agent_responder.ex:485-487` `` and ``(line 228) — line pin `router.ex:1447` ``. THE POINT OF THE ROW: the check was watched failing on real pins before they were rewritten. De-pinning both into prose (`… into \`router.ex\` at line 1447`) then returns 82 pass / 0 fail with the forensic sentences fully intact. |
+// | 8 | the reviewer's escape — append `(see agent_responder.ex:485)` to a line inside the record block | 81 pass / **1 fail** — `no line pin survives anywhere in the record, prefixed or bare`, naming line 105. This is the mutation that scored 81 pass / **0 fail** before the widening. It now detonates, and the narrower `no citation carries a line pin` stays GREEN, which is correct: there is no citation on that line, only a bare mention. That split is why the two tests are separate. |
+// | 9 | row 3 re-run — add `:532` to the `build_system_event_signal/2` citation | 80 pass / **2 fail**, and BOTH pin tests fire: `no citation carries a line pin` (unchanged, so the widening did not break it) and the new one. A prefixed pin is still a pin; it is now caught twice, by two selectors, each naming which one it was. |
+// | 10 | THE DISCRIMINATION ROW — inject `12:30`, `2026-07-31T19:32:18.053Z`, `1.4:2`, `v1.2.3`, `localhost:4000`, `16:9`, a bare `index.ts` | 82 pass / **0 fail**. Every one is inert: the ban demands a source extension immediately followed by `:` and a digit, so ordinary prose, times, versions, ports and unpinned filenames do not trip it. **AND ONE RESULT THAT WAS NOT PREDICTED:** `package.json:5` and `process-patterns.md:12` are ALSO inert. Pins into non-source files are not banned by either audit — including into `process-patterns.md`, which is where the org rule being enforced actually lives. Left as-is and documented at `BARE_LINE_PIN_RE` rather than silently widened: `.md:`/`.json:` carry a different false-positive profile and this task's defect was bare SOURCE pins. Reported rather than quietly fixed, and rather than quietly dropped. |
 
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -144,14 +172,57 @@ const REFERENCE_HEAD_RE = /(\d)\/3\s+[a-z0-9-]+:/;
 // control 3 through.
 //
 // The repo token prefix is what distinguishes a CITATION from prose mentioning
-// a filename. That distinction is deliberate: the record recounts the two pins
-// this task removed (`agent_responder.ex:485-487`, `router.ex:1447`) as
-// history, and those bare mentions must stay legal — the record explains a rot
-// that a reader can no longer see any other way.
+// a filename. It is still the right selector for THIS constant — a bare
+// filename is not a cross-repo citation — but see `BARE_LINE_PIN_RE` for why it
+// is the wrong selector for the pin ban.
 const CITATION_RE = /\b[a-z0-9-]+:[\w./-]+\.(?:ex|exs|ts|tsx|js|mjs)/;
 
 // A source path followed by a colon and a digit: the banned position pin.
 const LINE_PIN_RE = /\.(ex|exs|ts):\d/;
+
+// THE SAME BAN, WITHOUT THE REPO-TOKEN PREREQUISITE, and applied to EVERY line
+// of a record rather than to citation lines alone.
+//
+// This exists because the original pin check banned only the shape that did not
+// rot. `LINE_PIN_RE` is only ever consulted for lines `CITATION_RE` or
+// `REFERENCE_HEAD_RE` already selected, and both of those require a `<repo>:`
+// prefix. Every pin this task actually found was BARE — `agent_responder.ex`
+// and a line range, `router.ex` and a line number, no repo token in sight — so
+// the ban as first written was enforced for the one form that had never been a
+// problem here, and silent about the form that put a reader 47 lines inside an
+// unrelated comment block. A reviewer proved it rather than arguing it:
+// appending a bare pin to a line inside the record scored 81 pass / 0 fail,
+// while the repo-prefixed equivalent correctly failed. Control rows 7-10 are
+// the re-measurement after this constant landed.
+//
+// Widening the SELECTOR instead — teaching `CITATION_RE` to accept bare
+// filenames — was rejected: `citationLines` also feeds nothing else today, but
+// the name would then be a lie, and "line mentioning a file" is genuinely not
+// "cross-repo citation". Two constants, two questions.
+//
+// The extension list is what keeps this from firing on ordinary prose. A clock
+// time (`12:30`), a timestamp (`…T19:32:18.053Z`), a bare version (`1.4:2`), a
+// port (`localhost:4000`), a ratio (`16:9`) and a filename with no position
+// (`index.ts`) all fail it, because it demands a source-file extension
+// IMMEDIATELY followed by a colon and a digit. Control row 10 measures that
+// rather than asserting it.
+//
+// KNOWN BOUNDARY, measured by the same control and left in place deliberately:
+// the list is SOURCE extensions, so a pin into a non-source file —
+// `package.json:5`, `process-patterns.md:12` — does not match and is not
+// banned. That is a real gap, and a slightly awkward one given the org rule
+// this enforces lives in a markdown file that pins would rot the same way.
+// Left alone because widening the list is a different decision with a
+// different false-positive profile (`.md:` and `.json:` turn up in prose far
+// more often than `.ex:` does) and this task's defect was bare SOURCE pins.
+// Recorded here so the next reader knows it is a boundary someone measured,
+// not one nobody noticed.
+//
+// The trailing `\d+(?:-\d+)?` is for the REPORT, not the trigger: `:\d` alone
+// matches identically, but quotes back `agent_responder.ex:4` for a pin that
+// reads `agent_responder.ex:485-487`, and a failure message that misquotes the
+// offending text costs the reader the one thing it was there to give them.
+const BARE_LINE_PIN_RE = /\b[\w.-]+\.(?:ex|exs|ts|tsx|js|mjs):\d+(?:-\d+)?/;
 
 const SOURCE_PATH_RE = /\.(ex|exs|ts|tsx|js|mjs)$/;
 
@@ -181,6 +252,10 @@ interface Record {
   selfHeaders: Array<{ number: number; line: number }>;
   references: Reference[];
   citationLines: Array<{ line: number; text: string }>;
+  // Every line carrying a pin, citation or not — the wider scan. Not a subset
+  // relation in either direction: a repo-prefixed pin appears in both lists, a
+  // bare one only here, and a citation with a `§` anchor only in the other.
+  pinnedLines: Array<{ line: number; text: string; pin: string }>;
   missingLabels: string[];
   markerLine: number;
 }
@@ -191,6 +266,7 @@ function buildRecord(path: string, source: string): Record {
   const selfHeaders: Array<{ number: number; line: number }> = [];
   const references: Reference[] = [];
   const citationLines: Array<{ line: number; text: string }> = [];
+  const pinnedLines: Array<{ line: number; text: string; pin: string }> = [];
   let markerLine = 0;
 
   lines.forEach((text, index) => {
@@ -218,6 +294,11 @@ function buildRecord(path: string, source: string): Record {
     if (REFERENCE_HEAD_RE.test(text) || CITATION_RE.test(text)) {
       citationLines.push({ line: lineNumber, text: text.trim() });
     }
+
+    // Unconditional — no selector runs first. That is the whole point: the
+    // selector is what the bare pins escaped through.
+    const pin = BARE_LINE_PIN_RE.exec(text);
+    if (pin) pinnedLines.push({ line: lineNumber, text: text.trim(), pin: pin[0] });
   });
 
   return {
@@ -227,6 +308,7 @@ function buildRecord(path: string, source: string): Record {
     selfHeaders,
     references,
     citationLines,
+    pinnedLines,
     missingLabels: CLAUSE_LABELS.filter((label) => !source.includes(label)),
     markerLine,
   };
@@ -408,6 +490,46 @@ describe("the envelope record cross-references its siblings", () => {
          whitelist it names. Neither could be detected, because a line number
          records no expectation. Replace the pin with a \`§\` anchor naming the
          function or block — that either is in the target or is not.`,
+      ),
+    ).toEqual([]);
+  });
+
+  // ADDED AFTER THE TEST ABOVE WAS SHOWN TO MISS THE PINS THIS TASK EXISTS FOR.
+  // Kept as a SEPARATE test rather than folded into it, so the two mechanisms
+  // stay independently observable: a bare pin fails this one alone, a
+  // repo-prefixed pin fails both, and either way the failing test name says
+  // which selector caught it. Folding them together would have made the
+  // narrower check unfalsifiable — it would never again fail alone.
+  test("no line pin survives anywhere in the record, prefixed or bare", () => {
+    const offenders = RECORDS.flatMap((record) =>
+      record.pinnedLines.map(
+        ({ line, text, pin }) => `${record.path} (line ${line}) — line pin \`${pin}\`: ${text}`,
+      ),
+    );
+
+    expect(
+      offenders,
+      report(
+        offenders,
+        `A line pin is banned WHEREVER it appears in a record — in a citation, in
+         prose, in a code comment beside the thing being described. The test
+         above only ever inspected lines carrying a \`<repo>:\` token, and every
+         pin this task actually found was bare, so the ban was enforced for the
+         one shape that had not rotted here and silent about the one that had.
+
+         Both of this record's original pins were bare: \`agent_responder.ex\`
+         plus a line range that had drifted 47 lines into an unrelated comment
+         block, and \`router.ex\` plus a line number that no longer lands on the
+         whitelist it names. Both still read as confident pointers. Neither
+         could be detected, because a line number records no expectation.
+
+         THIS IS NOT AN INSTRUCTION TO DELETE THE SENTENCE. The record's account
+         of what rotted is the evidence for the rule and must survive. Rewrite
+         the pin into prose that names the file and the position separately —
+         "was pinned into \`router.ex\` at line 1447" carries the identical
+         forensic detail and is not a pointer anyone can follow into the wrong
+         text. For a live pointer, use a \`§\` anchor naming the function or
+         block.`,
       ),
     ).toEqual([]);
   });
