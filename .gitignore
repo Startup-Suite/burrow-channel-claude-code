@@ -4,3 +4,8 @@ dist/
 .env
 .DS_Store
 *.log
+.mcp.json
+mcp.json
+CLAUDE.md
+prompts/
+erl_crash.dump
