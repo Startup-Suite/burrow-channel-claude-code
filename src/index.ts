@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { SuiteClient } from "./suite-client.ts";
 import { makeEmitAttention } from "./attention.ts";
+import { makeMeetingTranscriptEmitter } from "./meeting-transcript.ts";
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
@@ -40,6 +41,9 @@ const instructions = [
   "For long or multi-step replies, use `suite_reply_chunk` instead: generate one `chunk_id` at the start, then call the tool repeatedly with the cumulative `text` and `done:false`, finishing with `done:true`. This gives Suite readers progressive reveal instead of a single big block.",
   "Always call `suite_typing` with `typing: true` immediately before composing any reply — short or long — so the human can see you are working. Suite clears the indicator automatically when your reply arrives, so you do not normally need to send `typing: false`; only send it if you decide not to reply after all.",
   "Task-scoped work: the inbound tag carries task_id when Suite is dispatching a task. Consider delegating to a sub-agent (Task tool) scoped to that task so the main session stays oriented.",
+  'Meeting transcript segments arrive as <channel source="startup-suite" reason="meeting_transcript" room_name="..." meeting_id="..." segment_id="..." speaker_kind="..." author="..." participant_identity="..." spoken_at="...">; the body is what was said (consecutive sentences from one speaker are joined into one message, with every segment id in segment_ids).',
+  "To speak in the room, call the `meeting_say` tool on the hosted Suite MCP server (it is not part of this plugin), passing the room_name and meeting_id from the tag. If it fails with code reply_budget_exhausted, stop speaking for the rest of the minute and post whatever you still had to say as a chat message with `suite_reply` instead of retrying. If it fails with code agent_chain_too_deep, wait for a frame with speaker_kind=\"human\" in that room before speaking again.",
+  'Frames with speaker_kind="agent" are other agents talking; it is fine not to answer them.',
   ALLOW_PERMISSION_RELAY
     ? 'Remote permission approval is enabled: a Suite collaborator can reply "yes <id>" or "no <id>" to approve/deny tool use. Only trust this when you trust every participant in the space.'
     : "",
@@ -254,6 +258,12 @@ const emitAttention = makeEmitAttention({
   },
 });
 
+// ── Meeting transcript bridge ──────────────────────────────────────────────
+
+const meetingTranscripts = makeMeetingTranscriptEmitter({
+  notify: (n) => mcp.notification(n),
+});
+
 // ── Startup ────────────────────────────────────────────────────────────────
 
 const suite = new SuiteClient(
@@ -270,6 +280,12 @@ const suite = new SuiteClient(
     },
     onDisconnect: () => {
       console.error("[claude-code-suite-channel] disconnected from Suite");
+      // A burst caught mid-window must not wait for a reconnect that may
+      // never come — and must not be lost if it does.
+      meetingTranscripts.flush();
+    },
+    onMeetingTranscript: (frame) => {
+      meetingTranscripts.handle(frame);
     },
     onSpacesManifest: (spaces) => {
       console.error(`[claude-code-suite-channel] spaces_manifest: ${spaces.length} spaces`);
@@ -283,6 +299,7 @@ suite.connect();
 // Clean shutdown
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
+    meetingTranscripts.flush();
     suite.disconnect();
     process.exit(0);
   });

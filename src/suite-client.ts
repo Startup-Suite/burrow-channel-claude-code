@@ -3,6 +3,7 @@ import { Socket, Channel } from "phoenix";
 import WebSocket from "ws";
 import pkg from "../package.json" with { type: "json" };
 import { resetHistoryTracking } from "./attention.ts";
+import type { MeetingTranscriptFrame } from "./meeting-transcript.ts";
 
 // Federation handshake: declare what client product is connecting so the Suite
 // dispatch renderer can distinguish Claude-channel runtimes (one agent per
@@ -141,6 +142,10 @@ export interface PermissionVerdict {
 export interface SuiteHandlers {
   onAttention: (payload: AttentionPayload) => void;
   onDisconnect: () => void;
+  // One final meeting transcript segment (`meeting_transcript` event). Typed
+  // loosely on purpose: core may add keys, and a malformed frame must be
+  // dropped by the handler, never thrown at from here.
+  onMeetingTranscript?: (frame: MeetingTranscriptFrame | Record<string, unknown>) => void;
   onSpacesManifest?: (spaces: Array<{ id: string; name: string; kind: string }>) => void;
   onPermissionVerdict?: (verdict: PermissionVerdict) => void;
 }
@@ -327,6 +332,13 @@ export class SuiteClient {
         if (first) this.recentMessageIds.delete(first);
       }
       this.handlers.onAttention(payload);
+    });
+
+    // Meeting transcript segments. No dedupe here: core guarantees one frame
+    // per final segment and `segment_id` is stable, and the coalescing in
+    // `meeting-transcript.ts` needs every frame it is going to join.
+    this.channel.on("meeting_transcript", (frame: Record<string, unknown>) => {
+      this.handlers.onMeetingTranscript?.(frame);
     });
 
     this.channel.on("spaces_manifest", (payload: { spaces: Array<{ id: string; name: string; kind: string }> }) => {

@@ -86,6 +86,7 @@ Until this plugin is submitted and approved, use the development flag:
 | Permission relay          | ✅     | Opt-in via `SUITE_ALLOW_PERMISSION_RELAY=1`                           |
 | Presence                  | ✅     | Tracked by Suite via the WebSocket connection                         |
 | Deduped messages          | ✅     | ~1s window to prevent double-delivery                                 |
+| Meeting transcripts       | ✅     | `meeting_transcript` frames posted with `reason="meeting_transcript"`  |
 | Session spawn by task_id  | ⛔     | Claude Code sessions are user-owned; see "Task-scoped work" below     |
 | Execution events          | ⏳     | Planned (issue #3)                                                    |
 
@@ -103,6 +104,41 @@ multi-paragraph response where a single atomic drop feels jarring.
 LiveView UI; not persisted). The plugin's tool handler auto-fires a `reply`
 on the final `done:true` chunk so the message lands in space history. Claude
 only needs the one tool.
+
+## Meeting transcripts
+
+When the agent's runtime is in a LiveKit meeting, core broadcasts one
+`meeting_transcript` frame per **final** transcript segment on the runtime
+channel (contract: `docs/contracts/meeting-transcript-frame.md` in core). The
+plugin delivers each one to the session as an inbound channel message:
+
+```
+<channel source="startup-suite" reason="meeting_transcript"
+         room_name="space-…" meeting_id="…" segment_id="…"
+         speaker_kind="human" author="Ryan"
+         participant_identity="user:…" spoken_at="2026-09-03T10:31:07.412Z">
+Can one of you pick up the deploy?
+</channel>
+```
+
+`author` is the speaker's display name, falling back to
+`participant_identity` when core has none. `speaker_kind="agent"` frames are
+other agents; the agent never receives its own segments.
+
+**Coalescing.** Speech-to-text emits a sentence at a time. Consecutive
+segments from the same `participant_identity` in the same `room_name` that
+arrive within 1.5 s of each other are joined into one message (texts joined
+by a single space, in arrival order). The burst is delivered 1.5 s after its
+last segment; a segment from a different speaker or room delivers any pending
+burst first, so order is preserved. A joined message carries the **first**
+segment's `segment_id` and `spoken_at`, plus `segment_ids` listing every id
+comma-joined. Anything pending is flushed on disconnect.
+
+The plugin never replies on its own and calls no tool. To speak in the room
+the agent uses the `meeting_say` tool on the hosted Suite MCP server (the
+`/mcp` endpoint above), passing `room_name` / `meeting_id` from the tag; core
+enforces the per-minute reply budget and the agent-to-agent chain depth.
+Frames missing `text` or `room_name` are dropped with a stderr log.
 
 ## Task-scoped work
 
