@@ -83,8 +83,16 @@ function log(msg: string): void {
  * two are the drop condition. Everything else is read defensively: a missing
  * or oddly-typed optional key degrades to an omitted tag attribute, never to
  * a thrown error and never to the literal string "undefined" in the tag.
+ *
+ * EXPORTED because `suite-client.ts` gates the outbound
+ * `meeting_transcript_ack` on exactly this check. The ack is the ONLY inbound
+ * evidence core has that this runtime can hear a meeting
+ * (`RuntimePresence.prove/2` will not take core's own outbound broadcast as
+ * proof), so a second hand-rolled check there could drift and start acking
+ * frames this module drops — turning an honest "never proven" cell into a
+ * false positive. One validator, one definition of "delivered".
  */
-function normaliseFrame(raw: unknown): MeetingTranscriptFrame | null {
+export function normaliseFrame(raw: unknown): MeetingTranscriptFrame | null {
   if (!raw || typeof raw !== "object") return null;
   const frame = raw as Record<string, unknown>;
   const text = frame.text;

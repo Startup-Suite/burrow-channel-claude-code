@@ -3,6 +3,7 @@ import { Socket, Channel } from "phoenix";
 import WebSocket from "ws";
 import pkg from "../package.json" with { type: "json" };
 import { resetHistoryTracking } from "./attention.ts";
+import { normaliseFrame } from "./meeting-transcript.ts";
 import type { MeetingTranscriptFrame } from "./meeting-transcript.ts";
 
 // Federation handshake: declare what client product is connecting so the Suite
@@ -337,7 +338,45 @@ export class SuiteClient {
     // Meeting transcript segments. No dedupe here: core guarantees one frame
     // per final segment and `segment_id` is stable, and the coalescing in
     // `meeting-transcript.ts` needs every frame it is going to join.
+    //
+    // ── `meeting_transcript_ack` ────────────────────────────────────────────
+    //
+    // Core's `RuntimePresence.prove/2` stamps a capability proven only from an
+    // INBOUND frame; recording its own outbound broadcast would be core
+    // certifying its own send, which is the inversion the mechanism exists to
+    // remove. `meeting_transcript` had no inbound frame at all, so its
+    // `proven` cell read `never` for every runtime forever — including ones
+    // that demonstrably could hear. This ack is that missing inbound frame.
+    //
+    // Two properties it must keep, or it is worse than nothing:
+    //
+    //   1. ONLY for a frame that really arrived and really validates. It is
+    //      gated on `normaliseFrame` — the same and only check the delivery
+    //      path applies — so a frame that is dropped (no text, no room_name)
+    //      produces NO ack. An ack without a delivered segment would turn an
+    //      honest-empty cell into a false positive.
+    //   2. SYNCHRONOUS, here in the channel handler. It is a receipt for the
+    //      raw inbound frame, deliberately decoupled from the 1.5s coalescing
+    //      window in `meeting-transcript.ts`: the agent's session sees a
+    //      coalesced burst up to `COALESCE_WINDOW_MS` later, and proof of
+    //      reception should not wait on that, nor be lost if the socket dies
+    //      mid-burst.
+    //
+    // `build` is `CLIENT_INFO.version` (the `package.json` string already sent
+    // in `client_info` at join) — the only build identifier this plugin has.
+    // Its known weakness is documented on `CLIENT_FEATURES` above: the version
+    // is not a function of the code, so it discriminates coarsely. It is sent
+    // because a proof with a build tag is strictly more useful than one
+    // without, not because it is precise.
     this.channel.on("meeting_transcript", (frame: Record<string, unknown>) => {
+      const valid = normaliseFrame(frame);
+      if (valid) {
+        this.channel?.push("meeting_transcript_ack", {
+          segment_id: valid.segment_id,
+          room_name: valid.room_name,
+          build: CLIENT_INFO.version,
+        });
+      }
       this.handlers.onMeetingTranscript?.(frame);
     });
 
