@@ -416,6 +416,12 @@ class FakePush {
 
 class FakeChannel {
   on_handlers: Record<string, (payload: unknown) => void> = {};
+  // Every outbound push, in order. `push()` used to discard its arguments,
+  // which made any "did we ack?" assertion vacuous: a push happens on this
+  // channel either way (`pong`, `reply`, …), so only the event NAME and
+  // PAYLOAD can distinguish an ack for a delivered segment from an ack fired
+  // at some other moment.
+  pushed: Array<{ event: string; payload: unknown }> = [];
   constructor(
     public topic: string,
     public params: unknown,
@@ -423,11 +429,18 @@ class FakeChannel {
   on(event: string, cb: (payload: unknown) => void): void {
     this.on_handlers[event] = cb;
   }
-  push(): FakePush {
+  push(event: string, payload?: unknown): FakePush {
+    this.pushed.push({ event, payload });
     return new FakePush();
   }
+  // The join push is retained rather than discarded so a test can invoke the
+  // callbacks `SuiteClient` registered on it — the "ack-at-connect" mutant
+  // pushes from inside `.receive("ok", …)`, and a fresh FakePush per call
+  // would hide it.
+  lastJoin: FakePush | null = null;
   join(): FakePush {
-    return new FakePush();
+    this.lastJoin = new FakePush();
+    return this.lastJoin;
   }
   leave(): void {}
 }
@@ -470,7 +483,7 @@ mock.module("phoenix", () => ({
   Channel: FakeChannel,
 }));
 
-const { SuiteClient } = await import("../src/suite-client.ts");
+const { SuiteClient, CLIENT_INFO } = await import("../src/suite-client.ts");
 
 describe("meeting_transcript — SuiteClient wiring", () => {
   test("a frame on channel.on(\"meeting_transcript\") reaches the session as one notification", () => {
@@ -559,6 +572,152 @@ describe("meeting_transcript — SuiteClient wiring", () => {
       client.connect();
       const onTranscript = sockets[0]!.lastChannel!.on_handlers["meeting_transcript"]!;
       expect(() => onTranscript({ room_name: RYAN.room_name })).not.toThrow();
+      clock.advance(COALESCE_WINDOW_MS);
+      expect(calls.length).toBe(0);
+    } finally {
+      console.error = original;
+      client.disconnect();
+    }
+  });
+});
+
+// ── The outbound ack ───────────────────────────────────────────────────────
+//
+// `meeting_transcript_ack` exists so core's `RuntimePresence.prove/2` has an
+// INBOUND frame proving this runtime heard a segment; core will not take its
+// own outbound broadcast as proof. That makes the ack's precision the whole
+// point: it must fire once per DELIVERED segment and never otherwise, because
+// an ack with no segment behind it converts an honest "never proven" cell into
+// a false positive — strictly worse than no ack at all.
+//
+// The named mutation these tests exist to kill is "ack-at-connect": move the
+// `channel.push("meeting_transcript_ack", …)` out of the frame handler and
+// into `.join().receive("ok", …)` (or anywhere in `connect()`), so the plugin
+// acks once per session instead of once per segment. `zero frames delivered →
+// zero acks` goes red against that mutant, and it can only do so because
+// `FakeChannel.push` now records the event name — a push happens either way.
+
+function acks(channel: FakeChannel): Array<Record<string, unknown>> {
+  return channel.pushed
+    .filter((p) => p.event === "meeting_transcript_ack")
+    .map((p) => p.payload as Record<string, unknown>);
+}
+
+function connectClient(emitter: { handle: (f: unknown) => void; flush: () => void }) {
+  sockets.length = 0;
+  const client = new SuiteClient(
+    { url: "ws://localhost/socket", runtimeId: "test-runtime", token: "t", reconnectIntervalMs: 1_000_000 },
+    {
+      onAttention: () => {},
+      onDisconnect: () => emitter.flush(),
+      onMeetingTranscript: (f) => emitter.handle(f),
+    },
+  );
+  client.connect();
+  const socket = sockets[0]!;
+  const channel = socket.lastChannel!;
+  return { client, socket, channel };
+}
+
+describe("meeting_transcript_ack — the inbound proof frame", () => {
+  test("MUTATION 'ack-at-connect': zero delivered frames means zero acks", () => {
+    const { emitter } = setup();
+    const { client, channel } = connectClient(emitter);
+    try {
+      // Connected and joined. No `meeting_transcript` frame has been
+      // delivered, so nothing has been heard and nothing may be claimed.
+      const ok = channel.lastJoin?.handlers["ok"];
+      expect(typeof ok).toBe("function");
+      ok!();
+
+      expect(acks(channel).length).toBe(0);
+    } finally {
+      client.disconnect();
+    }
+  });
+
+  test("one delivered frame acks once, synchronously, with segment_id, room_name and the client_info build", () => {
+    const { clock, calls, emitter } = setup();
+    const { client, channel } = connectClient(emitter);
+    try {
+      const onTranscript = channel.on_handlers["meeting_transcript"]!;
+      onTranscript(RYAN);
+
+      // Synchronous: the ack is a receipt for the raw frame, not for the
+      // coalesced notification, so it is already out while the burst is still
+      // inside its 1.5 s window and the session has seen nothing.
+      expect(calls.length).toBe(0);
+      expect(acks(channel)).toEqual([
+        {
+          segment_id: RYAN.segment_id,
+          room_name: RYAN.room_name,
+          build: CLIENT_INFO.version,
+        },
+      ]);
+
+      // Closing the window delivers the segment and does NOT ack a second time.
+      clock.advance(COALESCE_WINDOW_MS);
+      expect(calls.length).toBe(1);
+      expect(acks(channel).length).toBe(1);
+    } finally {
+      client.disconnect();
+    }
+  });
+
+  test("the build is the same string client_info carries at join", () => {
+    const { emitter } = setup();
+    const { client, channel } = connectClient(emitter);
+    try {
+      channel.on_handlers["meeting_transcript"]!(RYAN);
+      const joinInfo = (channel.params as { client_info: { version: string } }).client_info;
+      expect(acks(channel)[0]!.build).toBe(joinInfo.version);
+    } finally {
+      client.disconnect();
+    }
+  });
+
+  test("one ack per segment: three frames in one coalesced burst ack three times", () => {
+    const { clock, calls, emitter } = setup();
+    const { client, channel } = connectClient(emitter);
+    try {
+      const onTranscript = channel.on_handlers["meeting_transcript"]!;
+      onTranscript(frame({ segment_id: "s1", text: "one" }));
+      clock.advance(200);
+      onTranscript(frame({ segment_id: "s2", text: "two" }));
+      clock.advance(200);
+      onTranscript(frame({ segment_id: "s3", text: "three" }));
+
+      // The three segments coalesce into ONE notification, but each was heard
+      // separately and each is acked separately — the ack is decoupled from
+      // the coalescing pipeline.
+      expect(acks(channel).map((a) => a.segment_id)).toEqual(["s1", "s2", "s3"]);
+      clock.advance(COALESCE_WINDOW_MS);
+      expect(calls.length).toBe(1);
+      expect(acks(channel).length).toBe(3);
+    } finally {
+      client.disconnect();
+    }
+  });
+
+  test("a frame the validator rejects produces NO ack", () => {
+    const { clock, calls, emitter } = setup();
+    const { client, channel } = connectClient(emitter);
+    const original = console.error;
+    console.error = () => {};
+    try {
+      const onTranscript = channel.on_handlers["meeting_transcript"]!;
+      // The exact rejections `normaliseFrame` makes — the ack must be gated on
+      // the SAME check the delivery path uses, or it widens what counts as
+      // "delivered".
+      const bad = (raw: unknown) => onTranscript(raw as Record<string, unknown>);
+      bad({ room_name: RYAN.room_name }); // no text
+      bad({ ...RYAN, text: "   " }); // whitespace-only text
+      bad({ ...RYAN, room_name: "" }); // no room to reply into
+      bad({ ...RYAN, text: 42 }); // wrong type
+      bad(null);
+      bad("not an object");
+
+      expect(acks(channel).length).toBe(0);
       clock.advance(COALESCE_WINDOW_MS);
       expect(calls.length).toBe(0);
     } finally {
