@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { SuiteClient } from "./suite-client.ts";
 import { makeEmitAttention } from "./attention.ts";
+import { replyResult } from "./reply-result.ts";
 import { makeMeetingTranscriptEmitter } from "./meeting-transcript.ts";
 
 // ── Configuration ──────────────────────────────────────────────────────────
@@ -183,8 +184,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   switch (req.params.name) {
     case "suite_reply": {
       const { space_id, content } = REPLY_SCHEMA.parse(req.params.arguments);
-      suite.sendReply(space_id, content);
-      return { content: [{ type: "text", text: "sent" }] };
+      return await replyResult((s, c) => suite.sendReply(s, c), space_id, content);
     }
     case "suite_reply_with_media": {
       const { space_id, content, attachments } = REPLY_WITH_MEDIA_SCHEMA.parse(
@@ -212,9 +212,14 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       // Suite's reply_chunk is ephemeral (PubSub broadcast only). On the final
       // chunk we also fire a regular reply so the message persists to the DB
       // and shows up in space history.
-      if (done) suite.sendReply(space_id, text);
+      if (done) {
+        // The final chunk persists via a regular reply, so it inherits the
+        // same ack handling — a refused persist must not report success.
+        const result = await replyResult((s, c) => suite.sendReply(s, c), space_id, text, `chunk ${chunk_id} finalized and persisted`);
+        return result;
+      }
       return {
-        content: [{ type: "text", text: done ? `chunk ${chunk_id} finalized and persisted` : `chunk ${chunk_id} appended` }],
+        content: [{ type: "text", text: `chunk ${chunk_id} appended` }],
       };
     }
     default:
