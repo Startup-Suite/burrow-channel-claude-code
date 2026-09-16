@@ -212,7 +212,32 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     case "suite_typing": {
       const { space_id, typing } = TYPING_SCHEMA.parse(req.params.arguments);
       suite.sendTyping(space_id, typing);
-      return { content: [{ type: "text", text: typing ? "typing on" : "typing off" }] };
+      // The push stays fire-and-forget (a cosmetic indicator must not delay
+      // the reply it precedes), so this result CANNOT assert that THIS call
+      // was delivered — "typing on" did, and was indistinguishable at the
+      // caller from the delivered case. Two honest shapes instead: a known
+      // prior refusal for this space is surfaced as an error, and otherwise
+      // the text says only that the indicator was sent, unacknowledged.
+      const refusal = suite.lastTypingRefusal(space_id);
+      if (refusal) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `typing indicator not delivered to space ${space_id}: ${refusal}`,
+            },
+          ],
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: `typing indicator ${typing ? "on" : "off"} sent (not acknowledged)`,
+          },
+        ],
+      };
     }
     case "suite_reply_chunk": {
       const { space_id, chunk_id, text, done } = REPLY_CHUNK_SCHEMA.parse(req.params.arguments);

@@ -183,11 +183,24 @@ describe("the ephemeral frames stay fire-and-forget but are no longer silent", (
   });
 
   // Control for the two above: the handler set is not trivially "everything",
-  // so `toContain("error")` is a real assertion. These frames deliberately do
-  // NOT install 'ok' or 'timeout' handlers — that is what fire-and-forget means.
-  test("the ephemeral frames install ONLY an error handler, not ok/timeout", () => {
+  // so `toContain("error")` is a real assertion.
+  //
+  // UPDATED in stage 4. `sendTyping` now also installs an 'ok' handler, whose
+  // only job is to CLEAR a recorded refusal for the space so a recovered space
+  // stops reporting a stale one (see typing-refusal.test.ts). That is still
+  // fire-and-forget: nothing is awaited and the method returns `undefined`
+  // synchronously, which the two tests above assert directly. Neither frame
+  // installs 'timeout', so this remains a real constraint on the handler set.
+  test("sendTyping installs error + ok and nothing else (no timeout)", () => {
     const { client, channel } = joinedClient();
     client.sendTyping(SPACE, true);
+    expect(Object.keys(channel.lastPush!.handlers).sort()).toEqual(["error", "ok"]);
+    client.disconnect();
+  });
+
+  test("sendReplyChunk still installs ONLY an error handler", () => {
+    const { client, channel } = joinedClient();
+    client.sendReplyChunk(SPACE, "chunk-1", "partial", false);
     expect(Object.keys(channel.lastPush!.handlers).sort()).toEqual(["error"]);
     client.disconnect();
   });

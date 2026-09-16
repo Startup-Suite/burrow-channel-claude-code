@@ -199,6 +199,7 @@ export class SuiteClient {
   // long before the join is acknowledged. Pushing on an unjoined channel is
   // silently buffered, so the tool layer needs to distinguish the two.
   private channelJoined = false;
+  private typingRefusals = new Map<string, string>();
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
@@ -354,17 +355,35 @@ export class SuiteClient {
    *
    * Core now answers this push with `{:reply, {:error, ...}}` on refusal, but
    * a failed typing indicator is cosmetic and is not worth failing or delaying
-   * the reply it precedes. The refusal is logged (so it is not silent, which
-   * was the actual defect) and nothing is awaited.
+   * the reply it precedes. Nothing is awaited. The refusal is logged AND
+   * recorded per-space (see `lastTypingRefusal`): logging alone left the MCP
+   * caller reading an unconditional "typing on" for a space it had no access
+   * to, which is the same success-shaped lie this task was filed about.
    */
   sendTyping(spaceId: string, typing: boolean): void {
     this.channel
       ?.push("typing", { space_id: spaceId, typing })
-      .receive("error", (payload: ReplyError) =>
-        log(
-          `typing indicator for space ${spaceId} refused: ${payload?.error ?? "unknown error"}`,
-        ),
-      );
+      .receive("ok", () => this.typingRefusals.delete(spaceId))
+      .receive("error", (payload: ReplyError) => {
+        const reason = payload?.error ?? "unknown error";
+        this.typingRefusals.set(spaceId, reason);
+        log(`typing indicator for space ${spaceId} refused: ${reason}`);
+      });
+  }
+
+  /**
+   * The most recent refusal Suite gave for a typing push to this space, or
+   * `undefined` if the last outcome was an ack (or nothing has come back yet).
+   *
+   * This exists because `sendTyping` is deliberately fire-and-forget: the tool
+   * layer returns before any ack arrives, so it cannot report THIS call's
+   * outcome. It can, however, report a refusal Suite has ALREADY given for the
+   * same space — which is what turns "typing on" from an unconditional
+   * affirmative into a claim with a source. Cleared on the first ack, so a
+   * space that recovers stops reporting a stale refusal.
+   */
+  lastTypingRefusal(spaceId: string): string | undefined {
+    return this.typingRefusals.get(spaceId);
   }
 
   /**
