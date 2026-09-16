@@ -163,6 +163,25 @@ const DEFAULT_MAX_RECONNECT_MS = 30_000;
 const WATCHDOG_INTERVAL_MS = 30_000;
 const STALE_TRAFFIC_MS = 120_000;
 
+// Push timeout for outbound `reply` pushes. The join path calls `join()` with
+// no explicit timeout, so it runs on the phoenix client default (10s) — this
+// constant states that same value explicitly for the reply push so a hung
+// server cannot leave an MCP tool call awaiting forever.
+const PUSH_TIMEOUT_MS = 10_000;
+
+/** Server payload for a refused `reply` push (core runtime_channel.ex). */
+export interface ReplyError {
+  error?: string;
+  recoverable?: boolean;
+  [key: string]: unknown;
+}
+
+/** Server payload for an accepted `reply` push. */
+export interface ReplyOk {
+  message_id?: string;
+  [key: string]: unknown;
+}
+
 function log(msg: string): void {
   console.error(`[suite-client ${new Date().toISOString()}] ${msg}`);
 }
@@ -176,6 +195,10 @@ function log(msg: string): void {
 export class SuiteClient {
   private socket: Socket | null = null;
   private channel: Channel | null = null;
+  // A channel object exists from the moment `socket.channel(...)` is called,
+  // long before the join is acknowledged. Pushing on an unjoined channel is
+  // silently buffered, so the tool layer needs to distinguish the two.
+  private channelJoined = false;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
@@ -199,6 +222,7 @@ export class SuiteClient {
     if (this.channel) {
       try { this.channel.leave(); } catch { /* noop */ }
       this.channel = null;
+      this.channelJoined = false;
     }
     if (this.socket) {
       try { this.socket.disconnect(); } catch { /* noop */ }
@@ -279,12 +303,50 @@ export class SuiteClient {
     }
     this.channel?.leave();
     this.channel = null;
+    this.channelJoined = false;
     this.socket?.disconnect();
     this.socket = null;
   }
 
-  sendReply(spaceId: string, content: string): void {
-    this.channel?.push("reply", { space_id: spaceId, content });
+  /**
+   * Send a reply and AWAIT the server's ack.
+   *
+   * Before 2026-09-16 this was fire-and-forget: `this.channel?.push(...)` with
+   * no `.receive()` handler, so an authorization refusal — and a null channel
+   * from a disconnected socket, courtesy of the optional chain — both looked
+   * exactly like success to the caller. Core now answers the `reply` push with
+   * `{:reply, {:ok, %{message_id: ...}}}` or `{:reply, {:error, %{error: ...,
+   * recoverable: false}}}`; this method surfaces both.
+   */
+  sendReply(spaceId: string, content: string): Promise<ReplyOk> {
+    const channel = this.channel;
+    if (!channel || !this.channelJoined) {
+      return Promise.reject(
+        new Error(
+          `not connected to Suite: the runtime channel is not joined, so the reply to space ${spaceId} was not delivered`,
+        ),
+      );
+    }
+
+    return new Promise<ReplyOk>((resolve, reject) => {
+      channel
+        .push("reply", { space_id: spaceId, content }, PUSH_TIMEOUT_MS)
+        .receive("ok", (payload: ReplyOk) => resolve(payload ?? {}))
+        .receive("error", (payload: ReplyError) => {
+          const err = new Error(
+            payload?.error ?? `reply to space ${spaceId} was refused by Suite`,
+          ) as Error & { recoverable?: boolean };
+          err.recoverable = payload?.recoverable ?? false;
+          reject(err);
+        })
+        .receive("timeout", () =>
+          reject(
+            new Error(
+              `timed out after ${PUSH_TIMEOUT_MS}ms waiting for Suite to ack the reply to space ${spaceId}`,
+            ),
+          ),
+        );
+    });
   }
 
   sendTyping(spaceId: string, typing: boolean): void {
@@ -320,6 +382,7 @@ export class SuiteClient {
     if (!this.socket) return;
 
     const topic = `runtime:${this.config.runtimeId}`;
+    this.channelJoined = false;
     this.channel = this.socket.channel(topic, {
       client_info: CLIENT_INFO,
     });
@@ -401,6 +464,7 @@ export class SuiteClient {
         // Join success — not socket open — is the real "we're back":
         // reset the backoff here so a flaky join doesn't shrink delays.
         this.reconnectAttempts = 0;
+        this.channelJoined = true;
         this.lastTrafficAt = Date.now();
       })
       .receive("error", (reason: unknown) => {
@@ -408,11 +472,13 @@ export class SuiteClient {
         // crash) previously logged once and left inbound dead forever while
         // the socket looked healthy. Treat it as a disconnect and keep
         // retrying with backoff.
+        this.channelJoined = false;
         log(`failed to join ${topic}: ${JSON.stringify(reason)} — scheduling reconnect`);
         this.handlers.onDisconnect();
         this.scheduleReconnect();
       })
       .receive("timeout", () => {
+        this.channelJoined = false;
         log(`join ${topic} timed out — scheduling reconnect`);
         this.handlers.onDisconnect();
         this.scheduleReconnect();
