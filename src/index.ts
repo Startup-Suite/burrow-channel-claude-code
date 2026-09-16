@@ -190,21 +190,54 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const { space_id, content, attachments } = REPLY_WITH_MEDIA_SCHEMA.parse(
         req.params.arguments,
       );
-      suite.sendReplyWithMedia(
+      // Was unconditional success: the push was fire-and-forget, so a refusal
+      // reported "sent with N attachment(s)". `replyResult` now surfaces the
+      // server's own error text and recoverable flag, exactly as suite_reply.
+      return await replyResult(
+        (s, c) =>
+          suite.sendReplyWithMedia(
+            s,
+            c,
+            attachments.map((a) => ({
+              filename: a.filename,
+              contentType: a.content_type,
+              data: a.data,
+            })),
+          ),
         space_id,
         content,
-        attachments.map((a) => ({
-          filename: a.filename,
-          contentType: a.content_type,
-          data: a.data,
-        })),
+        `sent with ${attachments.length} attachment(s)`,
       );
-      return { content: [{ type: "text", text: `sent with ${attachments.length} attachment(s)` }] };
     }
     case "suite_typing": {
       const { space_id, typing } = TYPING_SCHEMA.parse(req.params.arguments);
       suite.sendTyping(space_id, typing);
-      return { content: [{ type: "text", text: typing ? "typing on" : "typing off" }] };
+      // The push stays fire-and-forget (a cosmetic indicator must not delay
+      // the reply it precedes), so this result CANNOT assert that THIS call
+      // was delivered — "typing on" did, and was indistinguishable at the
+      // caller from the delivered case. Two honest shapes instead: a known
+      // prior refusal for this space is surfaced as an error, and otherwise
+      // the text says only that the indicator was sent, unacknowledged.
+      const refusal = suite.lastTypingRefusal(space_id);
+      if (refusal) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `typing indicator not delivered to space ${space_id}: ${refusal}`,
+            },
+          ],
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: `typing indicator ${typing ? "on" : "off"} sent (not acknowledged)`,
+          },
+        ],
+      };
     }
     case "suite_reply_chunk": {
       const { space_id, chunk_id, text, done } = REPLY_CHUNK_SCHEMA.parse(req.params.arguments);

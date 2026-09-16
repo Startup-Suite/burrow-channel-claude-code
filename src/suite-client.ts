@@ -199,6 +199,7 @@ export class SuiteClient {
   // long before the join is acknowledged. Pushing on an unjoined channel is
   // silently buffered, so the tool layer needs to distinguish the two.
   private channelJoined = false;
+  private typingRefusals = new Map<string, string>();
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
@@ -349,25 +350,85 @@ export class SuiteClient {
     });
   }
 
+  /**
+   * Typing indicator — DELIBERATELY fire-and-forget.
+   *
+   * Core now answers this push with `{:reply, {:error, ...}}` on refusal, but
+   * a failed typing indicator is cosmetic and is not worth failing or delaying
+   * the reply it precedes. Nothing is awaited. The refusal is logged AND
+   * recorded per-space (see `lastTypingRefusal`): logging alone left the MCP
+   * caller reading an unconditional "typing on" for a space it had no access
+   * to, which is the same success-shaped lie this task was filed about.
+   */
   sendTyping(spaceId: string, typing: boolean): void {
-    this.channel?.push("typing", { space_id: spaceId, typing });
+    this.channel
+      ?.push("typing", { space_id: spaceId, typing })
+      .receive("ok", () => this.typingRefusals.delete(spaceId))
+      .receive("error", (payload: ReplyError) => {
+        const reason = payload?.error ?? "unknown error";
+        this.typingRefusals.set(spaceId, reason);
+        log(`typing indicator for space ${spaceId} refused: ${reason}`);
+      });
   }
 
+  /**
+   * The most recent refusal Suite gave for a typing push to this space, or
+   * `undefined` if the last outcome was an ack (or nothing has come back yet).
+   *
+   * This exists because `sendTyping` is deliberately fire-and-forget: the tool
+   * layer returns before any ack arrives, so it cannot report THIS call's
+   * outcome. It can, however, report a refusal Suite has ALREADY given for the
+   * same space — which is what turns "typing on" from an unconditional
+   * affirmative into a claim with a source. Cleared on the first ack, so a
+   * space that recovers stops reporting a stale refusal.
+   */
+  lastTypingRefusal(spaceId: string): string | undefined {
+    return this.typingRefusals.get(spaceId);
+  }
+
+  /**
+   * Progressive-reveal chunk — also fire-and-forget, same rationale as
+   * `sendTyping`. A chunk is an ephemeral broadcast with no persisted row;
+   * the FINAL text of a chunked reply is delivered by `sendReply`, which does
+   * await its ack, so a dropped chunk degrades the reveal and never the
+   * message.
+   */
   sendReplyChunk(spaceId: string, chunkId: string, text: string, done: boolean): void {
-    this.channel?.push("reply_chunk", {
-      space_id: spaceId,
-      chunk_id: chunkId,
-      text,
-      done,
-    });
+    this.channel
+      ?.push("reply_chunk", {
+        space_id: spaceId,
+        chunk_id: chunkId,
+        text,
+        done,
+      })
+      .receive("error", (payload: ReplyError) =>
+        log(
+          `reply_chunk ${chunkId} for space ${spaceId} refused: ${payload?.error ?? "unknown error"}`,
+        ),
+      );
   }
 
+  /**
+   * Send a reply with attachments and AWAIT the server's ack — the same
+   * treatment `sendReply` got, for the same reason: this was
+   * `this.channel?.push(...)` with no receive handler, so an authorization
+   * refusal and a null channel both read as success to the caller.
+   */
   sendReplyWithMedia(
     spaceId: string,
     content: string,
     attachments: Array<{ filename: string; contentType: string; data: string }>,
-  ): void {
-    this.channel?.push("reply_with_media", {
+  ): Promise<ReplyOk> {
+    const channel = this.channel;
+    if (!channel || !this.channelJoined) {
+      return Promise.reject(
+        new Error(
+          `not connected to Suite: the runtime channel is not joined, so the reply to space ${spaceId} was not delivered`,
+        ),
+      );
+    }
+
+    const payload = {
       space_id: spaceId,
       content,
       attachments: attachments.map((a) => ({
@@ -375,6 +436,26 @@ export class SuiteClient {
         content_type: a.contentType,
         data: a.data,
       })),
+    };
+
+    return new Promise<ReplyOk>((resolve, reject) => {
+      channel
+        .push("reply_with_media", payload, PUSH_TIMEOUT_MS)
+        .receive("ok", (ok: ReplyOk) => resolve(ok ?? {}))
+        .receive("error", (err: ReplyError) => {
+          const error = new Error(
+            err?.error ?? `reply to space ${spaceId} was refused by Suite`,
+          ) as Error & { recoverable?: boolean };
+          error.recoverable = err?.recoverable ?? false;
+          reject(error);
+        })
+        .receive("timeout", () =>
+          reject(
+            new Error(
+              `timed out after ${PUSH_TIMEOUT_MS}ms waiting for Suite to ack the reply to space ${spaceId}`,
+            ),
+          ),
+        );
     });
   }
 
