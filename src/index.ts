@@ -190,16 +190,24 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const { space_id, content, attachments } = REPLY_WITH_MEDIA_SCHEMA.parse(
         req.params.arguments,
       );
-      suite.sendReplyWithMedia(
+      // Was unconditional success: the push was fire-and-forget, so a refusal
+      // reported "sent with N attachment(s)". `replyResult` now surfaces the
+      // server's own error text and recoverable flag, exactly as suite_reply.
+      return await replyResult(
+        (s, c) =>
+          suite.sendReplyWithMedia(
+            s,
+            c,
+            attachments.map((a) => ({
+              filename: a.filename,
+              contentType: a.content_type,
+              data: a.data,
+            })),
+          ),
         space_id,
         content,
-        attachments.map((a) => ({
-          filename: a.filename,
-          contentType: a.content_type,
-          data: a.data,
-        })),
+        `sent with ${attachments.length} attachment(s)`,
       );
-      return { content: [{ type: "text", text: `sent with ${attachments.length} attachment(s)` }] };
     }
     case "suite_typing": {
       const { space_id, typing } = TYPING_SCHEMA.parse(req.params.arguments);
