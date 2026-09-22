@@ -200,6 +200,9 @@ export class SuiteClient {
   // silently buffered, so the tool layer needs to distinguish the two.
   private channelJoined = false;
   private typingRefusals = new Map<string, string>();
+  // Separate from `typingRefusals`: the two clear on different acks, so a
+  // typing ack must never erase a chunk refusal for the same space.
+  private chunkRefusals = new Map<string, string>();
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
@@ -391,7 +394,10 @@ export class SuiteClient {
    * `sendTyping`. A chunk is an ephemeral broadcast with no persisted row;
    * the FINAL text of a chunked reply is delivered by `sendReply`, which does
    * await its ack, so a dropped chunk degrades the reveal and never the
-   * message.
+   * message. Nothing is awaited, so a non-final chunk never blocks. The
+   * refusal is logged AND recorded per-space (see `lastChunkRefusal`), so the
+   * tool layer can stop reporting "appended" for a space Suite has already
+   * refused.
    */
   sendReplyChunk(spaceId: string, chunkId: string, text: string, done: boolean): void {
     this.channel
@@ -401,11 +407,30 @@ export class SuiteClient {
         text,
         done,
       })
-      .receive("error", (payload: ReplyError) =>
+      .receive("ok", () => this.chunkRefusals.delete(spaceId))
+      .receive("error", (payload: ReplyError) => {
+        const reason = payload?.error ?? "unknown error";
+        this.chunkRefusals.set(spaceId, reason);
         log(
           `reply_chunk ${chunkId} for space ${spaceId} refused: ${payload?.error ?? "unknown error"}`,
-        ),
-      );
+        );
+      });
+  }
+
+  /**
+   * The most recent refusal Suite gave for a reply_chunk push to this space,
+   * or `undefined` if the last outcome was an ack (or nothing has come back
+   * yet).
+   *
+   * This exists because `sendReplyChunk` is deliberately fire-and-forget: the
+   * tool layer returns before any ack arrives, so it cannot report THIS
+   * chunk's outcome. It can, however, report a refusal Suite has ALREADY
+   * given for the same space — which is what turns "chunk appended" from an
+   * unconditional affirmative into a claim with a source. Cleared on the
+   * first ack, so a space that recovers stops reporting a stale refusal.
+   */
+  lastChunkRefusal(spaceId: string): string | undefined {
+    return this.chunkRefusals.get(spaceId);
   }
 
   /**

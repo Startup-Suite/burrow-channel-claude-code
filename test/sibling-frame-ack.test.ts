@@ -198,10 +198,13 @@ describe("the ephemeral frames stay fire-and-forget but are no longer silent", (
     client.disconnect();
   });
 
-  test("sendReplyChunk still installs ONLY an error handler", () => {
+  // UPDATED in task 01a0ac1d stage 1, for the same reason as `sendTyping`
+  // above: an 'ok' handler now CLEARS a recorded chunk refusal for the space
+  // (see chunk-refusal.test.ts). Still fire-and-forget, still no 'timeout'.
+  test("sendReplyChunk installs error + ok and nothing else (no timeout)", () => {
     const { client, channel } = joinedClient();
     client.sendReplyChunk(SPACE, "chunk-1", "partial", false);
-    expect(Object.keys(channel.lastPush!.handlers).sort()).toEqual(["error"]);
+    expect(Object.keys(channel.lastPush!.handlers).sort()).toEqual(["error", "ok"]);
     client.disconnect();
   });
 });

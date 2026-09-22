@@ -10,6 +10,7 @@ import { z } from "zod";
 import { SuiteClient } from "./suite-client.ts";
 import { makeEmitAttention } from "./attention.ts";
 import { replyResult } from "./reply-result.ts";
+import { partialChunkResult } from "./chunk-result.ts";
 import { makeMeetingTranscriptEmitter } from "./meeting-transcript.ts";
 
 // ── Configuration ──────────────────────────────────────────────────────────
@@ -251,9 +252,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         const result = await replyResult((s, c) => suite.sendReply(s, c), space_id, text, `chunk ${chunk_id} finalized and persisted`);
         return result;
       }
-      return {
-        content: [{ type: "text", text: `chunk ${chunk_id} appended` }],
-      };
+      // Non-final chunks stay fire-and-forget; surface a known refusal for
+      // this space instead of asserting delivery.
+      return partialChunkResult(chunk_id, space_id, suite.lastChunkRefusal(space_id));
     }
     default:
       throw new Error(`unknown tool: ${req.params.name}`);
