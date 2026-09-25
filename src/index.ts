@@ -9,8 +9,7 @@ import { z } from "zod";
 
 import { SuiteClient } from "./suite-client.ts";
 import { makeEmitAttention } from "./attention.ts";
-import { replyResult } from "./reply-result.ts";
-import { partialChunkResult } from "./chunk-result.ts";
+import { callTool, REPLY_EXTRAS_INSTRUCTION, TOOL_DEFINITIONS } from "./tools.ts";
 import { makeMeetingTranscriptEmitter } from "./meeting-transcript.ts";
 
 // ── Configuration ──────────────────────────────────────────────────────────
@@ -41,6 +40,7 @@ const instructions = [
   "Reply with the `suite_reply` tool, passing the `space_id` attribute from the inbound tag.",
   "To attach files, use `suite_reply_with_media` (attachments are base64-encoded).",
   "For long or multi-step replies, use `suite_reply_chunk` instead: generate one `chunk_id` at the start, then call the tool repeatedly with the cumulative `text` and `done:false`, finishing with `done:true`. This gives Suite readers progressive reveal instead of a single big block.",
+  REPLY_EXTRAS_INSTRUCTION,
   "Always call `suite_typing` with `typing: true` immediately before composing any reply — short or long — so the human can see you are working. Suite clears the indicator automatically when your reply arrives, so you do not normally need to send `typing: false`; only send it if you decide not to reply after all.",
   "Task-scoped work: the inbound tag carries task_id when Suite is dispatching a task. Consider delegating to a sub-agent (Task tool) scoped to that task so the main session stays oriented.",
   'Meeting transcript segments arrive as <channel source="startup-suite" reason="meeting_transcript" room_name="..." meeting_id="..." segment_id="..." speaker_kind="..." author="..." participant_identity="..." spoken_at="...">; the body is what was said (consecutive sentences from one speaker are joined into one message, with every segment id in segment_ids).',
@@ -63,203 +63,11 @@ const mcp = new Server(
 
 // ── Outbound tools ─────────────────────────────────────────────────────────
 
-const REPLY_SCHEMA = z.object({
-  space_id: z.string().describe("UUID of the Suite space to reply in (from the inbound channel tag)"),
-  content: z.string().describe("Reply body (markdown)"),
-});
+mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFINITIONS }));
 
-const REPLY_WITH_MEDIA_SCHEMA = z.object({
-  space_id: z.string(),
-  content: z.string(),
-  attachments: z
-    .array(
-      z.object({
-        filename: z.string(),
-        content_type: z.string(),
-        data: z.string().describe("Base64-encoded file contents"),
-      }),
-    )
-    .min(1),
-});
-
-const TYPING_SCHEMA = z.object({
-  space_id: z.string(),
-  typing: z.boolean(),
-});
-
-const REPLY_CHUNK_SCHEMA = z.object({
-  space_id: z.string(),
-  chunk_id: z
-    .string()
-    .describe(
-      "Stable identifier shared across all chunks of one reply — Suite appends chunks with the same id to a single message. Generate it once at the start of a chunked reply and reuse it for each chunk.",
-    ),
-  text: z.string().describe("Cumulative reply text so far (not delta). Suite replaces the in-flight message with this text on every chunk."),
-  done: z
-    .boolean()
-    .describe("Set to true on the final chunk of the reply so Suite finalizes the message. Set to false while more chunks are coming."),
-});
-
-mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    {
-      name: "suite_reply",
-      description:
-        "Send a text reply into a Startup Suite space. Use this to answer a message that arrived via the channel. Pass the space_id attribute from the inbound <channel> tag.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          space_id: { type: "string" },
-          content: { type: "string" },
-        },
-        required: ["space_id", "content"],
-      },
-    },
-    {
-      name: "suite_reply_with_media",
-      description:
-        "Send a text reply with base64-encoded file attachments (e.g. a screenshot or diagram). Use when a visual artifact belongs in the thread.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          space_id: { type: "string" },
-          content: { type: "string" },
-          attachments: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                filename: { type: "string" },
-                content_type: { type: "string" },
-                data: { type: "string" },
-              },
-              required: ["filename", "content_type", "data"],
-            },
-            minItems: 1,
-          },
-        },
-        required: ["space_id", "content", "attachments"],
-      },
-    },
-    {
-      name: "suite_typing",
-      description:
-        "Toggle a typing indicator in the Suite space so humans can see that a reply is being composed.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          space_id: { type: "string" },
-          typing: { type: "boolean" },
-        },
-        required: ["space_id", "typing"],
-      },
-    },
-    {
-      name: "suite_reply_chunk",
-      description:
-        "Send a partial reply chunk to a Suite space, appearing to the human as a progressively-revealed message. Use this for long or multi-step replies: call it several times in a row with the same chunk_id, passing the cumulative text each call. Set done:true on the last call. Prefer suite_reply for short replies where progressive reveal adds no value.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          space_id: { type: "string" },
-          chunk_id: {
-            type: "string",
-            description: "Stable id across all chunks of one reply. Reuse it on every chunk.",
-          },
-          text: {
-            type: "string",
-            description: "Cumulative reply text so far (not delta).",
-          },
-          done: {
-            type: "boolean",
-            description: "true on the final chunk, false otherwise.",
-          },
-        },
-        required: ["space_id", "chunk_id", "text", "done"],
-      },
-    },
-  ],
-}));
-
-mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
-  switch (req.params.name) {
-    case "suite_reply": {
-      const { space_id, content } = REPLY_SCHEMA.parse(req.params.arguments);
-      return await replyResult((s, c) => suite.sendReply(s, c), space_id, content);
-    }
-    case "suite_reply_with_media": {
-      const { space_id, content, attachments } = REPLY_WITH_MEDIA_SCHEMA.parse(
-        req.params.arguments,
-      );
-      // Was unconditional success: the push was fire-and-forget, so a refusal
-      // reported "sent with N attachment(s)". `replyResult` now surfaces the
-      // server's own error text and recoverable flag, exactly as suite_reply.
-      return await replyResult(
-        (s, c) =>
-          suite.sendReplyWithMedia(
-            s,
-            c,
-            attachments.map((a) => ({
-              filename: a.filename,
-              contentType: a.content_type,
-              data: a.data,
-            })),
-          ),
-        space_id,
-        content,
-        `sent with ${attachments.length} attachment(s)`,
-      );
-    }
-    case "suite_typing": {
-      const { space_id, typing } = TYPING_SCHEMA.parse(req.params.arguments);
-      suite.sendTyping(space_id, typing);
-      // The push stays fire-and-forget (a cosmetic indicator must not delay
-      // the reply it precedes), so this result CANNOT assert that THIS call
-      // was delivered — "typing on" did, and was indistinguishable at the
-      // caller from the delivered case. Two honest shapes instead: a known
-      // prior refusal for this space is surfaced as an error, and otherwise
-      // the text says only that the indicator was sent, unacknowledged.
-      const refusal = suite.lastTypingRefusal(space_id);
-      if (refusal) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text: `typing indicator not delivered to space ${space_id}: ${refusal}`,
-            },
-          ],
-        };
-      }
-      return {
-        content: [
-          {
-            type: "text",
-            text: `typing indicator ${typing ? "on" : "off"} sent (not acknowledged)`,
-          },
-        ],
-      };
-    }
-    case "suite_reply_chunk": {
-      const { space_id, chunk_id, text, done } = REPLY_CHUNK_SCHEMA.parse(req.params.arguments);
-      suite.sendReplyChunk(space_id, chunk_id, text, done);
-      // Suite's reply_chunk is ephemeral (PubSub broadcast only). On the final
-      // chunk we also fire a regular reply so the message persists to the DB
-      // and shows up in space history.
-      if (done) {
-        // The final chunk persists via a regular reply, so it inherits the
-        // same ack handling — a refused persist must not report success.
-        const result = await replyResult((s, c) => suite.sendReply(s, c), space_id, text, `chunk ${chunk_id} finalized and persisted`);
-        return result;
-      }
-      // Non-final chunks stay fire-and-forget; surface a known refusal for
-      // this space instead of asserting delivery.
-      return partialChunkResult(chunk_id, space_id, suite.lastChunkRefusal(space_id));
-    }
-    default:
-      throw new Error(`unknown tool: ${req.params.name}`);
-  }
-});
+mcp.setRequestHandler(CallToolRequestSchema, async (req) =>
+  callTool(suite, req.params.name, req.params.arguments),
+);
 
 // ── Permission relay ───────────────────────────────────────────────────────
 

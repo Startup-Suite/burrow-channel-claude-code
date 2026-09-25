@@ -83,12 +83,27 @@ Until this plugin is submitted and approved, use the development flag:
 | Reply with media          | ✅     | `suite_reply_with_media` tool, base64 attachments                     |
 | Typing indicator          | ✅     | `suite_typing` tool                                                   |
 | Reply chunks              | ✅     | `suite_reply_chunk` tool — cumulative-text progressive reveal          |
+| Reply annotations         | ✅     | Optional `in_reply_to_message_id` + `context` on the reply tools      |
 | Permission relay          | ✅     | Opt-in via `SUITE_ALLOW_PERMISSION_RELAY=1`                           |
 | Presence                  | ✅     | Tracked by Suite via the WebSocket connection                         |
 | Deduped messages          | ✅     | ~1s window to prevent double-delivery                                 |
 | Meeting transcripts       | ✅     | `meeting_transcript` frames posted with `reason="meeting_transcript"`  |
 | Session spawn by task_id  | ⛔     | Claude Code sessions are user-owned; see "Task-scoped work" below     |
 | Execution events          | ⏳     | Planned (issue #3)                                                    |
+
+## Reply annotations
+
+`suite_reply`, `suite_reply_with_media` and the final (`done:true`)
+`suite_reply_chunk` accept two optional fields:
+
+- `in_reply_to_message_id`: the `message_id` attribute of the channel tag the
+  reply answers. Suite links the reply to that message.
+- `context`: one line, at most 200 characters, saying what the reply answers,
+  for a reader arriving hours later.
+
+Suite validates both. An invalid one is not stored, but the message still
+posts; the tool result then names the refused field and Suite's reason (for
+example `in_reply_to_message_id (not_found)`). Non-final chunks carry neither.
 
 ## Reply chunking
 

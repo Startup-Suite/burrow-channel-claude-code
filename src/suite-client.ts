@@ -176,10 +176,49 @@ export interface ReplyError {
   [key: string]: unknown;
 }
 
+/**
+ * One optional reply annotation core refused (core `Platform.Chat.ReplyContext`).
+ * The message itself still posted; only this field was not stored.
+ */
+export interface DroppedField {
+  field: string;
+  reason: string;
+}
+
 /** Server payload for an accepted `reply` push. */
 export interface ReplyOk {
   message_id?: string;
+  /** Present only when core refused one or more optional annotations. */
+  dropped?: DroppedField[];
   [key: string]: unknown;
+}
+
+/**
+ * Optional annotations on a `reply` / `reply_with_media` push (task 01a0d8de).
+ *
+ *   - `in_reply_to_message_id`: the Suite message this reply answers.
+ *   - `context`: one agent-written line saying what the reply answers.
+ *
+ * Both are validated by core and DROPPED (reported in the ack's `dropped`
+ * list) rather than failing the reply, so the plugin forwards them as given.
+ */
+export interface ReplyExtras {
+  in_reply_to_message_id?: string;
+  context?: string;
+}
+
+/**
+ * The extras that are actually set. An absent or undefined field is omitted
+ * from the wire payload, so a reply without annotations pushes the same
+ * `{space_id, content}` keys it always did.
+ */
+export function replyExtrasPayload(extras?: ReplyExtras): ReplyExtras {
+  const out: ReplyExtras = {};
+  if (extras?.in_reply_to_message_id !== undefined) {
+    out.in_reply_to_message_id = extras.in_reply_to_message_id;
+  }
+  if (extras?.context !== undefined) out.context = extras.context;
+  return out;
 }
 
 function log(msg: string): void {
@@ -322,7 +361,7 @@ export class SuiteClient {
    * `{:reply, {:ok, %{message_id: ...}}}` or `{:reply, {:error, %{error: ...,
    * recoverable: false}}}`; this method surfaces both.
    */
-  sendReply(spaceId: string, content: string): Promise<ReplyOk> {
+  sendReply(spaceId: string, content: string, extras?: ReplyExtras): Promise<ReplyOk> {
     const channel = this.channel;
     if (!channel || !this.channelJoined) {
       return Promise.reject(
@@ -334,7 +373,11 @@ export class SuiteClient {
 
     return new Promise<ReplyOk>((resolve, reject) => {
       channel
-        .push("reply", { space_id: spaceId, content }, PUSH_TIMEOUT_MS)
+        .push(
+          "reply",
+          { space_id: spaceId, content, ...replyExtrasPayload(extras) },
+          PUSH_TIMEOUT_MS,
+        )
         .receive("ok", (payload: ReplyOk) => resolve(payload ?? {}))
         .receive("error", (payload: ReplyError) => {
           const err = new Error(
@@ -443,6 +486,7 @@ export class SuiteClient {
     spaceId: string,
     content: string,
     attachments: Array<{ filename: string; contentType: string; data: string }>,
+    extras?: ReplyExtras,
   ): Promise<ReplyOk> {
     const channel = this.channel;
     if (!channel || !this.channelJoined) {
@@ -456,6 +500,7 @@ export class SuiteClient {
     const payload = {
       space_id: spaceId,
       content,
+      ...replyExtrasPayload(extras),
       attachments: attachments.map((a) => ({
         filename: a.filename,
         content_type: a.contentType,
