@@ -3,6 +3,7 @@ import { Socket, Channel } from "phoenix";
 import WebSocket from "ws";
 import pkg from "../package.json" with { type: "json" };
 import { resetHistoryTracking } from "./attention.ts";
+import { BUILD, BUILD_ERROR, PROCESS_STARTED_AT } from "./build-identity.ts";
 import { normaliseFrame } from "./meeting-transcript.ts";
 import type { MeetingTranscriptFrame } from "./meeting-transcript.ts";
 
@@ -11,6 +12,20 @@ import type { MeetingTranscriptFrame } from "./meeting-transcript.ts";
 // connection — dispatch should suggest spawning a subagent for parallelism)
 // from OpenClaw runtimes (which can host many agents per connection).
 // Suite-side treats missing client_info as "unknown" (forward compatible).
+//
+// ── `build` / `build_error` / `started_at` ─────────────────────────────────
+//
+// `build` is the LOAD-BEARING identity: the commit sha this process loaded
+// (`<40-hex>`, `-dirty` appended when tracked files differed from HEAD), or
+// the docker image's stamped `SUITE_CHANNEL_BUILD`. It answers "is this
+// runtime on the build whose source I am reading?". `version` stays for
+// humans only - it is `package.json`'s string and discriminates nothing.
+// When the sha cannot be resolved, `build` is OMITTED and `build_error` says
+// why, so core can tell "tried and could not" from "predates the contract".
+// `started_at` is this PROCESS's start, never a connection time. All three are
+// resolved once at module load (`build-identity.ts`), so a rejoin re-sends
+// what the resident process loaded, not what is checked out now. Core reads
+// them in runtime_channel.ex (`normalize_build/1`, `normalize_started_at/1`).
 //
 // ── `features` ─────────────────────────────────────────────────────────────
 //
@@ -45,10 +60,21 @@ import type { MeetingTranscriptFrame } from "./meeting-transcript.ts";
 // delivered every one of those as an empty <channel> tag.
 export const CLIENT_FEATURES = ["system_event_prompt"] as const;
 
-export const CLIENT_INFO = {
-  product: "claude_channel" as const,
+export interface ClientInfo {
+  product: "claude_channel";
+  version: string;
+  features: typeof CLIENT_FEATURES;
+  build?: string;
+  build_error?: string;
+  started_at: string;
+}
+
+export const CLIENT_INFO: ClientInfo = {
+  product: "claude_channel",
   version: (pkg as { version?: string }).version ?? "unknown",
   features: CLIENT_FEATURES,
+  ...(BUILD !== null ? { build: BUILD } : { build_error: BUILD_ERROR ?? "build unresolved" }),
+  started_at: PROCESS_STARTED_AT,
 };
 
 export interface SuiteConfig {
@@ -576,19 +602,19 @@ export class SuiteClient {
     //      reception should not wait on that, nor be lost if the socket dies
     //      mid-burst.
     //
-    // `build` is `CLIENT_INFO.version` (the `package.json` string already sent
-    // in `client_info` at join) — the only build identifier this plugin has.
-    // Its known weakness is documented on `CLIENT_FEATURES` above: the version
-    // is not a function of the code, so it discriminates coarsely. It is sent
-    // because a proof with a build tag is strictly more useful than one
-    // without, not because it is precise.
+    // `build` is `CLIENT_INFO.build` - the commit sha this process loaded, the
+    // same value sent in `client_info` at join. Only when that could not be
+    // resolved does it fall back to `CLIENT_INFO.version`, the `package.json`
+    // string, which is not a function of the code (see `CLIENT_FEATURES`) and
+    // so discriminates coarsely; a proof with a coarse tag is still more
+    // useful than one with none.
     this.channel.on("meeting_transcript", (frame: Record<string, unknown>) => {
       const valid = normaliseFrame(frame);
       if (valid) {
         this.channel?.push("meeting_transcript_ack", {
           segment_id: valid.segment_id,
           room_name: valid.room_name,
-          build: CLIENT_INFO.version,
+          build: CLIENT_INFO.build ?? CLIENT_INFO.version,
         });
       }
       this.handlers.onMeetingTranscript?.(frame);
