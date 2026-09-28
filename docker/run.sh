@@ -43,8 +43,21 @@ CONTAINER_NAME="${SUITE_WORKER_CONTAINER:-suite-worker-${SUITE_RUNTIME_ID}}"
 
 # ── Build image ─────────────────────────────────────────────────────────────
 if [[ "$REBUILD" -eq 1 ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  echo "[run] building $IMAGE"
-  docker build -t "$IMAGE" -f "$SCRIPT_DIR/Dockerfile" "$REPO_ROOT"
+  # Stamp the commit being built so the plugin can report it as
+  # client_info.build (the image has no .git). Same rule as
+  # src/build-identity.ts: -dirty when tracked files differ from HEAD.
+  BUILD_SHA=""
+  if BUILD_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)"; then
+    if [[ -n "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ]]; then
+      BUILD_SHA="${BUILD_SHA}-dirty"
+    fi
+  else
+    BUILD_SHA=""
+    echo "[run] warning: $REPO_ROOT is not a git checkout; the worker will report build_error instead of a build" >&2
+  fi
+  echo "[run] building $IMAGE (build=${BUILD_SHA:-unresolved})"
+  docker build -t "$IMAGE" -f "$SCRIPT_DIR/Dockerfile" \
+    --build-arg "SUITE_CHANNEL_BUILD=${BUILD_SHA}" "$REPO_ROOT"
 fi
 
 # ── Clean up stale container ────────────────────────────────────────────────

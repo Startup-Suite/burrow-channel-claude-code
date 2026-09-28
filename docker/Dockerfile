@@ -37,6 +37,13 @@ RUN bun install --frozen-lockfile
 COPY src ./src
 COPY tsconfig.json ./
 
+# The image carries src/ WITHOUT .git, so the plugin cannot resolve its own
+# commit at runtime. docker/run.sh passes the sha of the checkout this image
+# was built from; src/build-identity.ts reports it as client_info.build.
+# Unset (a bare `docker build`) means the plugin reports build_error instead.
+ARG SUITE_CHANNEL_BUILD=""
+ENV SUITE_CHANNEL_BUILD=${SUITE_CHANNEL_BUILD}
+
 # ── Entrypoint ───────────────────────────────────────────────────────────────
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

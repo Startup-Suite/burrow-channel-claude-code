@@ -651,9 +651,13 @@ describe("meeting_transcript_ack — the inbound proof frame", () => {
         {
           segment_id: RYAN.segment_id,
           room_name: RYAN.room_name,
-          build: CLIENT_INFO.version,
+          // The loaded commit sha (task 01a09e63), not the package.json
+          // version, whenever the sha resolved - as it does in any checkout.
+          build: CLIENT_INFO.build ?? CLIENT_INFO.version,
         },
       ]);
+      expect(CLIENT_INFO.build).toBeDefined();
+      expect(acks(channel)[0]!.build).not.toBe(CLIENT_INFO.version);
 
       // Closing the window delivers the segment and does NOT ack a second time.
       clock.advance(COALESCE_WINDOW_MS);
@@ -669,8 +673,11 @@ describe("meeting_transcript_ack — the inbound proof frame", () => {
     const { client, channel } = connectClient(emitter);
     try {
       channel.on_handlers["meeting_transcript"]!(RYAN);
-      const joinInfo = (channel.params as { client_info: { version: string } }).client_info;
-      expect(acks(channel)[0]!.build).toBe(joinInfo.version);
+      // Same identity as the join: `client_info.build` (the loaded commit sha)
+      // since task 01a09e63, no longer the package.json `version`.
+      const joinInfo = (channel.params as { client_info: { build?: string; version: string } }).client_info;
+      expect(typeof joinInfo.build).toBe("string");
+      expect(acks(channel)[0]!.build).toBe(joinInfo.build);
     } finally {
       client.disconnect();
     }

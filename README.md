@@ -74,6 +74,23 @@ Until this plugin is submitted and approved, use the development flag:
    any attention event posted in the Suite space Claude's runtime participates
    in will arrive as a `<channel>` tag in your terminal.
 
+## Build identity
+
+On every runtime-channel join the plugin sends `client_info.build`: the git
+commit sha this process loaded (40 hex characters, with `-dirty` appended when
+tracked files differed from `HEAD`), and `client_info.started_at`: when the
+plugin **process** started (ISO-8601, never the connection time). Both are
+resolved once when the plugin loads, so a reconnect re-sends the code that is
+resident, not whatever has since been checked out — a reconnect moves
+`connected_at` but not `started_at`; a restart moves both. Suite's
+`federation_status` reads them to answer "is this runtime on the build whose
+source I am reading?". `version` is `package.json`'s string, kept for humans
+only; it is never used as the build. The sha comes from `SUITE_CHANNEL_BUILD`
+if set (the docker image sets it — see `docker/run.sh`), else from
+`git rev-parse HEAD` of the plugin checkout. If neither works (no `.git`, or
+the plugin is vendored inside another repository) `build` is omitted and
+`client_info.build_error` says why; the plugin never guesses.
+
 ## Capabilities
 
 | Feature                   | Status | Notes                                                                 |
