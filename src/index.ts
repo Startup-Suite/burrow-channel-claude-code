@@ -11,20 +11,27 @@ import { SuiteClient } from "./suite-client.ts";
 import { makeEmitAttention } from "./attention.ts";
 import { callTool, REPLY_EXTRAS_INSTRUCTION, TOOL_DEFINITIONS } from "./tools.ts";
 import { makeMeetingTranscriptEmitter } from "./meeting-transcript.ts";
+import { resolveStartupConfig, StartupError, type StartupConfig } from "./startup-config.ts";
+import { writeChannelState } from "./channel-state.ts";
 
 // ── Configuration ──────────────────────────────────────────────────────────
+//
+// SUITE_TOKEN may be a token REF (`keychain:<item>` with
+// SUITE_TOKEN_KEYCHAIN_SERVICE, or `file:<absolute path>`), resolved here, in
+// memory, before anything connects. A literal still works. A refusal names the
+// ref and never a value (src/token-ref.ts, suite-cli spec/token-ref.md).
 
-const SUITE_URL = process.env.SUITE_URL;
-const SUITE_RUNTIME_ID = process.env.SUITE_RUNTIME_ID;
-const SUITE_TOKEN = process.env.SUITE_TOKEN;
-const ALLOW_PERMISSION_RELAY = process.env.SUITE_ALLOW_PERMISSION_RELAY === "1";
-
-if (!SUITE_URL || !SUITE_RUNTIME_ID || !SUITE_TOKEN) {
-  console.error(
-    "[claude-code-suite-channel] missing env: SUITE_URL, SUITE_RUNTIME_ID, SUITE_TOKEN are all required",
-  );
+let startup: StartupConfig;
+try {
+  startup = await resolveStartupConfig(process.env);
+} catch (e) {
+  console.error(`[claude-code-suite-channel] ${e instanceof StartupError ? e.message : "startup failed"}`);
   process.exit(1);
 }
+const SUITE_URL = startup.url;
+const SUITE_RUNTIME_ID = startup.runtimeId;
+const SUITE_TOKEN = startup.token;
+const ALLOW_PERMISSION_RELAY = startup.allowPermissionRelay;
 
 // ── MCP server ─────────────────────────────────────────────────────────────
 
@@ -125,7 +132,11 @@ const suite = new SuiteClient(
         console.error("[claude-code-suite-channel] attention handler error:", err);
       });
     },
+    onJoined: () => {
+      writeChannelState(process.env, SUITE_RUNTIME_ID, "joined");
+    },
     onDisconnect: () => {
+      writeChannelState(process.env, SUITE_RUNTIME_ID, "disconnected");
       console.error("[claude-code-suite-channel] disconnected from Suite");
       // A burst caught mid-window must not wait for a reconnect that may
       // never come — and must not be lost if it does.
@@ -147,6 +158,7 @@ suite.connect();
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
     meetingTranscripts.flush();
+    writeChannelState(process.env, SUITE_RUNTIME_ID, "disconnected");
     suite.disconnect();
     process.exit(0);
   });

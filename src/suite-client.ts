@@ -169,6 +169,8 @@ export interface PermissionVerdict {
 export interface SuiteHandlers {
   onAttention: (payload: AttentionPayload) => void;
   onDisconnect: () => void;
+  /** The runtime channel join succeeded (first join and every rejoin). */
+  onJoined?: () => void;
   // One final meeting transcript segment (`meeting_transcript` event). Typed
   // loosely on purpose: core may add keys, and a malformed frame must be
   // dropped by the handler, never thrown at from here.
@@ -643,6 +645,7 @@ export class SuiteClient {
         this.reconnectAttempts = 0;
         this.channelJoined = true;
         this.lastTrafficAt = Date.now();
+        this.handlers.onJoined?.();
       })
       .receive("error", (reason: unknown) => {
         // A rejected join (stale token, runtime deregistered, server-side

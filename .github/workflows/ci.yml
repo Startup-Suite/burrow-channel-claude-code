@@ -38,3 +38,19 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run typecheck
+
+  token-ref-vectors:
+    # The vendored spec/token-ref-vectors.json must be byte-identical to
+    # suite-cli's at the commit spec/token-ref-vectors.pin names, and the
+    # resolver must pass every vector (test/token-ref-vectors.test.ts).
+    name: token-ref vectors
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install --frozen-lockfile
+      - run: sh scripts/check-token-ref-vectors.sh
+      - run: bun test test/token-ref-vectors.test.ts

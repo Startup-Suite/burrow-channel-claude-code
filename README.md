@@ -74,6 +74,40 @@ Until this plugin is submitted and approved, use the development flag:
    any attention event posted in the Suite space Claude's runtime participates
    in will arrive as a `<channel>` tag in your terminal.
 
+## Token refs: keep the token out of the config
+
+`SUITE_TOKEN` may name WHERE the runtime token is kept instead of holding it.
+The plugin resolves it at startup, in memory:
+
+| `SUITE_TOKEN` | Also set | Reads |
+| --- | --- | --- |
+| `keychain:<item>` | `SUITE_TOKEN_KEYCHAIN_SERVICE=<service>` | `/usr/bin/security find-generic-password -s <service> -a <item> -w` (macOS only) |
+| `file:<absolute path>` | | the file, which must be a regular file you own, mode `0600` or `0400` |
+| anything else | | used as the token itself, as before |
+
+The keychain is read with that exact argv, by absolute path, with no shell:
+the argv carries names only, and a `security` earlier on `PATH` cannot answer
+for the keychain. A ref that does not resolve stops the plugin with one line
+naming the ref, the item, the path or the mode, and never a value. `suite
+claude` writes these entries for you when the machine was connected with
+`suite init --token-ref`.
+
+The syntax is defined once, in suite-cli's
+[`spec/token-ref.md`](https://github.com/Startup-Suite/suite-cli/blob/main/spec/token-ref.md).
+This repo vendors its test vectors as `spec/token-ref-vectors.json`, pinned to a
+suite-cli commit in `spec/token-ref-vectors.pin`;
+`sh scripts/check-token-ref-vectors.sh` fails when the copy and the pin
+disagree, and CI runs it and the vectors.
+
+`package.json` declares `"suite": {"tokenRefs": 1}`. suite-cli reads that
+marker before writing a ref into an entry, and moves an older checkout to a
+pinned commit when it is missing.
+
+On every join and disconnect the plugin also writes
+`<XDG_STATE_HOME or ~/.local/state>/suite/channel/<runtime id>.json`
+(`{"state", "pid", "at"}`, no secret), which `suite status --json` reads
+instead of starting a second copy of this plugin to ask.
+
 ## Build identity
 
 On every runtime-channel join the plugin sends `client_info.build`: the git

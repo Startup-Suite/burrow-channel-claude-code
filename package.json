@@ -12,10 +12,14 @@
   "bin": {
     "claude-code-suite-channel": "./src/index.ts"
   },
+  "suite": {
+    "tokenRefs": 1
+  },
   "scripts": {
     "start": "bun src/index.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "check:token-ref-vectors": "sh scripts/check-token-ref-vectors.sh",
     "test:client-info-handshake": "bun test test/client-info-handshake.test.ts"
   },
   "dependencies": {
