@@ -149,7 +149,7 @@ describe("SuiteClient federation handshake", () => {
 
     // Still the full pre-existing handshake, unchanged.
     expect(ci.product).toBe("claude_channel");
-    expect(ci.version).toBe("0.3.0");
+    expect(ci.version).toBe("0.3.1");
   });
 
   // The exact literal, isolated from the join plumbing, so a drift in the
