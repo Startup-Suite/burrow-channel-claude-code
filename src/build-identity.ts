@@ -11,7 +11,8 @@
 // ── BUILD ───────────────────────────────────────────────────────────────────
 //
 // Resolution order:
-//   1. env `SUITE_CHANNEL_BUILD`, if non-empty. Set only by docker/Dockerfile,
+//   1. env `BURROW_CHANNEL_BUILD`, else the deprecated `SUITE_CHANNEL_BUILD`
+//      (src/env.ts), if non-empty. Set only by docker/Dockerfile,
 //      whose image copies `src/` without `.git`, from `docker/run.sh`'s
 //      `git rev-parse HEAD` of the checkout it built from.
 //   2. `git rev-parse HEAD` of the PLUGIN ROOT (the directory holding this
@@ -36,6 +37,8 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
+
+import { readEnv } from "./env.ts";
 
 const GIT_TIMEOUT_MS = 3_000;
 const ERROR_DETAIL_MAX = 120;
@@ -68,23 +71,23 @@ function git(root: string, args: string[]): string {
 }
 
 export function resolveBuild(env: NodeJS.ProcessEnv, moduleDir: string): Resolution {
-  const fromEnv = env.SUITE_CHANNEL_BUILD?.trim();
+  const fromEnv = readEnv("CHANNEL_BUILD", env)?.trim();
   if (fromEnv) return { build: fromEnv, error: null };
 
   const root = findPluginRoot(moduleDir);
-  if (!root) return { build: null, error: "no package.json above the plugin source and SUITE_CHANNEL_BUILD unset" };
+  if (!root) return { build: null, error: "no package.json above the plugin source and BURROW_CHANNEL_BUILD unset" };
 
   let toplevel: string;
   try {
     toplevel = git(root, ["rev-parse", "--show-toplevel"]);
   } catch (err) {
-    return { build: null, error: `not a git checkout and SUITE_CHANNEL_BUILD unset (${errorDetail(err)})`.slice(0, 200) };
+    return { build: null, error: `not a git checkout and BURROW_CHANNEL_BUILD unset (${errorDetail(err)})`.slice(0, 200) };
   }
 
   if (realpathSync(toplevel) !== realpathSync(root)) {
     return {
       build: null,
-      error: "plugin root is not the git toplevel (vendored inside another repo) and SUITE_CHANNEL_BUILD unset",
+      error: "plugin root is not the git toplevel (vendored inside another repo) and BURROW_CHANNEL_BUILD unset",
     };
   }
 

@@ -41,7 +41,11 @@ COPY tsconfig.json ./
 # commit at runtime. docker/run.sh passes the sha of the checkout this image
 # was built from; src/build-identity.ts reports it as client_info.build.
 # Unset (a bare `docker build`) means the plugin reports build_error instead.
+# BURROW_CHANNEL_BUILD is read first; SUITE_CHANNEL_BUILD stays set for an
+# older run.sh that passes only that build arg.
+ARG BURROW_CHANNEL_BUILD=""
 ARG SUITE_CHANNEL_BUILD=""
+ENV BURROW_CHANNEL_BUILD=${BURROW_CHANNEL_BUILD}
 ENV SUITE_CHANNEL_BUILD=${SUITE_CHANNEL_BUILD}
 
 # ── Entrypoint ───────────────────────────────────────────────────────────────

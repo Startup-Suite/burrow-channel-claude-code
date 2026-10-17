@@ -74,7 +74,7 @@ interface PendingBurst {
 }
 
 function log(msg: string): void {
-  console.error(`[claude-code-suite-channel] ${msg}`);
+  console.error(`[burrow-channel-claude-code] ${msg}`);
 }
 
 /**

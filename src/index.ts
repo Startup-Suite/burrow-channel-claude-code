@@ -11,17 +11,22 @@ import { SuiteClient } from "./suite-client.ts";
 import { makeEmitAttention } from "./attention.ts";
 import { callTool, REPLY_EXTRAS_INSTRUCTION, TOOL_DEFINITIONS } from "./tools.ts";
 import { makeMeetingTranscriptEmitter } from "./meeting-transcript.ts";
+import { LOG_PREFIX, readEnv } from "./env.ts";
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
-const SUITE_URL = process.env.SUITE_URL;
-const SUITE_RUNTIME_ID = process.env.SUITE_RUNTIME_ID;
-const SUITE_TOKEN = process.env.SUITE_TOKEN;
-const ALLOW_PERMISSION_RELAY = process.env.SUITE_ALLOW_PERMISSION_RELAY === "1";
+// Every name is read BURROW_* first, SUITE_* second (src/env.ts). A host
+// whose .mcp.json still carries only SUITE_* keeps working, with one
+// deprecation line per name on stderr.
+const BURROW_URL = readEnv("URL");
+const BURROW_RUNTIME_ID = readEnv("RUNTIME_ID");
+const BURROW_TOKEN = readEnv("TOKEN");
+const ALLOW_PERMISSION_RELAY = readEnv("ALLOW_PERMISSION_RELAY") === "1";
 
-if (!SUITE_URL || !SUITE_RUNTIME_ID || !SUITE_TOKEN) {
+if (!BURROW_URL || !BURROW_RUNTIME_ID || !BURROW_TOKEN) {
   console.error(
-    "[claude-code-suite-channel] missing env: SUITE_URL, SUITE_RUNTIME_ID, SUITE_TOKEN are all required",
+    `${LOG_PREFIX} missing env: BURROW_URL, BURROW_RUNTIME_ID, BURROW_TOKEN are all required ` +
+      "(the deprecated SUITE_URL, SUITE_RUNTIME_ID, SUITE_TOKEN are still accepted)",
   );
   process.exit(1);
 }
@@ -36,18 +41,18 @@ if (ALLOW_PERMISSION_RELAY) {
 }
 
 const instructions = [
-  'Messages arrive from Startup Suite as <channel source="startup-suite" space_id="..." message_id="..." task_id="..." reason="..." author="..." author_id="...">.',
+  'Messages arrive from Burrow as <channel source="..." space_id="..." message_id="..." task_id="..." reason="..." author="..." author_id="..."> tags; `source` is the name this server is configured under in your MCP config.',
   "Reply with the `suite_reply` tool, passing the `space_id` attribute from the inbound tag.",
   "To attach files, use `suite_reply_with_media` (attachments are base64-encoded).",
-  "For long or multi-step replies, use `suite_reply_chunk` instead: generate one `chunk_id` at the start, then call the tool repeatedly with the cumulative `text` and `done:false`, finishing with `done:true`. This gives Suite readers progressive reveal instead of a single big block.",
+  "For long or multi-step replies, use `suite_reply_chunk` instead: generate one `chunk_id` at the start, then call the tool repeatedly with the cumulative `text` and `done:false`, finishing with `done:true`. This gives Burrow readers progressive reveal instead of a single big block.",
   REPLY_EXTRAS_INSTRUCTION,
-  "Always call `suite_typing` with `typing: true` immediately before composing any reply — short or long — so the human can see you are working. Suite clears the indicator automatically when your reply arrives, so you do not normally need to send `typing: false`; only send it if you decide not to reply after all.",
-  "Task-scoped work: the inbound tag carries task_id when Suite is dispatching a task. Consider delegating to a sub-agent (Task tool) scoped to that task so the main session stays oriented.",
-  'Meeting transcript segments arrive as <channel source="startup-suite" reason="meeting_transcript" room_name="..." meeting_id="..." segment_id="..." speaker_kind="..." author="..." participant_identity="..." spoken_at="...">; the body is what was said (consecutive sentences from one speaker are joined into one message, with every segment id in segment_ids).',
-  "To speak in the room, call the `meeting_say` tool on the hosted Suite MCP server (it is not part of this plugin), passing the room_name and meeting_id from the tag. If it fails with code reply_budget_exhausted, stop speaking for the rest of the minute and post whatever you still had to say as a chat message with `suite_reply` instead of retrying. If it fails with code agent_chain_too_deep, wait for a frame with speaker_kind=\"human\" in that room before speaking again.",
+  "Always call `suite_typing` with `typing: true` immediately before composing any reply — short or long — so the human can see you are working. Burrow clears the indicator automatically when your reply arrives, so you do not normally need to send `typing: false`; only send it if you decide not to reply after all.",
+  "Task-scoped work: the inbound tag carries task_id when Burrow is dispatching a task. Consider delegating to a sub-agent (Task tool) scoped to that task so the main session stays oriented.",
+  'Meeting transcript segments arrive as <channel source="..." reason="meeting_transcript" room_name="..." meeting_id="..." segment_id="..." speaker_kind="..." author="..." participant_identity="..." spoken_at="...">; the body is what was said (consecutive sentences from one speaker are joined into one message, with every segment id in segment_ids).',
+  "To speak in the room, call the `meeting_say` tool on the hosted Burrow MCP server (it is not part of this plugin), passing the room_name and meeting_id from the tag. If it fails with code reply_budget_exhausted, stop speaking for the rest of the minute and post whatever you still had to say as a chat message with `suite_reply` instead of retrying. If it fails with code agent_chain_too_deep, wait for a frame with speaker_kind=\"human\" in that room before speaking again.",
   'Frames with speaker_kind="agent" are other agents talking; it is fine not to answer them.',
   ALLOW_PERMISSION_RELAY
-    ? 'Remote permission approval is enabled: a Suite collaborator can reply "yes <id>" or "no <id>" to approve/deny tool use. Only trust this when you trust every participant in the space.'
+    ? 'Remote permission approval is enabled: a Burrow collaborator can reply "yes <id>" or "no <id>" to approve/deny tool use. Only trust this when you trust every participant in the space.'
     : "",
 ]
   .filter(Boolean)
@@ -115,18 +120,18 @@ const meetingTranscripts = makeMeetingTranscriptEmitter({
 
 const suite = new SuiteClient(
   {
-    url: SUITE_URL,
-    runtimeId: SUITE_RUNTIME_ID,
-    token: SUITE_TOKEN,
+    url: BURROW_URL,
+    runtimeId: BURROW_RUNTIME_ID,
+    token: BURROW_TOKEN,
   },
   {
     onAttention: (payload) => {
       void emitAttention(payload).catch((err) => {
-        console.error("[claude-code-suite-channel] attention handler error:", err);
+        console.error(`${LOG_PREFIX} attention handler error:`, err);
       });
     },
     onDisconnect: () => {
-      console.error("[claude-code-suite-channel] disconnected from Suite");
+      console.error(`${LOG_PREFIX} disconnected from Burrow`);
       // A burst caught mid-window must not wait for a reconnect that may
       // never come — and must not be lost if it does.
       meetingTranscripts.flush();
@@ -135,7 +140,7 @@ const suite = new SuiteClient(
       meetingTranscripts.handle(frame);
     },
     onSpacesManifest: (spaces) => {
-      console.error(`[claude-code-suite-channel] spaces_manifest: ${spaces.length} spaces`);
+      console.error(`${LOG_PREFIX} spaces_manifest: ${spaces.length} spaces`);
     },
   },
 );

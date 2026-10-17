@@ -300,7 +300,7 @@ export function makeEmitAttention(opts: EmitAttentionOptions): (payload: Attenti
     // block). Both are pinned by tests.
     if (!text.trim() && !meta.task_id && !meta.message_id && !meta.responsibility_key) {
       console.error(
-        `[claude-code-suite-channel] dropped content-less attention (reason=${meta.reason || "unknown"})`,
+        `[burrow-channel-claude-code] dropped content-less attention (reason=${meta.reason || "unknown"})`,
       );
       return;
     }
