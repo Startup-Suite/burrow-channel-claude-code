@@ -31,7 +31,7 @@ RUN npm install -g @anthropic-ai/claude-code
 
 # ── Channel plugin ───────────────────────────────────────────────────────────
 # Build context is the repo root; Dockerfile lives under docker/.
-WORKDIR /opt/claude-code-suite-channel
+WORKDIR /opt/burrow-channel-claude-code
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 COPY src ./src

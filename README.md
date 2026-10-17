@@ -1,9 +1,9 @@
 # burrow-channel-claude-code
 
 The Burrow channel plugin for Claude Code. The package is
-`burrow-channel-claude-code`; the repository is still named
-`claude-code-suite-channel`, and the old `claude-code-suite-channel` bin name
-stays as an alias.
+`burrow-channel-claude-code`, and so is the repository (formerly
+`claude-code-suite-channel`; GitHub redirects the old URL). The old
+`claude-code-suite-channel` bin name stays as an alias.
 
 A Claude Code [channels](https://code.claude.com/docs/en/channels) plugin for
 Burrow federation (the `core` repository in the GitHub organization that
@@ -47,7 +47,8 @@ Until this plugin is submitted and approved, use the development flag:
 
 1. Clone and install deps:
 
-   The repository is `claude-code-suite-channel`. Its clone URL follows the
+   The repository is `burrow-channel-claude-code` (formerly
+   `claude-code-suite-channel`, which still redirects). Its clone URL follows the
    GitHub organization that hosts Burrow; after an organization rename
    the old URL keeps working through GitHub's redirect. `suite init` clones it
    for you from its own configured owner (`SUITE_GITHUB_OWNER`, default
@@ -55,8 +56,8 @@ Until this plugin is submitted and approved, use the development flag:
 
    ```bash
    OWNER="${SUITE_GITHUB_OWNER:-Startup-Suite}"
-   git clone "https://github.com/${OWNER}/claude-code-suite-channel.git"
-   cd claude-code-suite-channel
+   git clone "https://github.com/${OWNER}/burrow-channel-claude-code.git"
+   cd burrow-channel-claude-code
    bun install
    ```
 
@@ -67,7 +68,7 @@ Until this plugin is submitted and approved, use the development flag:
      "mcpServers": {
        "suite-channel": {
          "command": "bun",
-         "args": ["/absolute/path/to/claude-code-suite-channel/src/index.ts"],
+         "args": ["/absolute/path/to/burrow-channel-claude-code/src/index.ts"],
          "env": {
            "BURROW_URL": "ws://127.0.0.1:4000/runtime/ws",
            "BURROW_RUNTIME_ID": "your-runtime-id",
@@ -173,7 +174,7 @@ plugin delivers each one to the session as an inbound channel message:
 ```
 <channel source="suite-channel" reason="meeting_transcript"
          room_name="space-…" meeting_id="…" segment_id="…"
-         speaker_kind="human" author="Ryan"
+         speaker_kind="human" author="Alice"
          participant_identity="user:…" spoken_at="2026-09-03T10:31:07.412Z">
 Can one of you pick up the deploy?
 </channel>
@@ -200,7 +201,8 @@ Frames missing `text` or `room_name` are dropped with a stderr log.
 
 ## Task-scoped work
 
-The OpenClaw `startup-suite-channel` plugin spawns a new agent session keyed
+The OpenClaw plugin (`burrow-channel-openclaw`, plugin id
+`startup-suite-channel-plugin`) spawns a new agent session keyed
 to a task when Burrow dispatches one. That pattern doesn't map to Claude Code
 — sessions are started by the user, not the plugin.
 

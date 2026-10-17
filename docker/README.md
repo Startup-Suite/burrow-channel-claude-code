@@ -37,7 +37,7 @@ both spellings into the container. When both are set, `BURROW_*` wins.
 From the project you want the worker to operate on:
 
 ```bash
-/path/to/claude-code-suite-channel/docker/run.sh
+/path/to/burrow-channel-claude-code/docker/run.sh
 ```
 
 First run builds the image (once). Subsequent runs reuse it. Force a rebuild
@@ -81,7 +81,7 @@ Start a shell inside the container without launching Claude:
 ```
 
 Tail the channel plugin's WebSocket activity by running
-`bun /opt/claude-code-suite-channel/src/index.ts` inside that shell with your
+`bun /opt/burrow-channel-claude-code/src/index.ts` inside that shell with your
 env vars — the plugin logs `[suite-client] joined runtime:<id>` when
 federation connects.
 

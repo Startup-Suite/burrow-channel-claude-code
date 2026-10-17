@@ -37,7 +37,7 @@ cat > "$WORKSPACE_DIR/.mcp.json" <<EOF
   "mcpServers": {
     "suite-channel": {
       "command": "bun",
-      "args": ["/opt/claude-code-suite-channel/src/index.ts"],
+      "args": ["/opt/burrow-channel-claude-code/src/index.ts"],
       "env": {
         "BURROW_URL": "$CHANNEL_URL",
         "BURROW_RUNTIME_ID": "$CHANNEL_RUNTIME_ID",
