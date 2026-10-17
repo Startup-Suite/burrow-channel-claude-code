@@ -1,7 +1,8 @@
 # claude-code-suite-channel
 
 A Claude Code [channels](https://code.claude.com/docs/en/channels) plugin for
-[Startup Suite](https://github.com/Startup-Suite/core) federation.
+Startup Suite federation (the `core` repository in the Startup Suite GitHub
+organization).
 
 When installed, Suite attention events (new messages, task dispatches, etc.)
 arrive in your running Claude Code session as `<channel source="startup-suite"
@@ -9,7 +10,7 @@ arrive in your running Claude Code session as `<channel source="startup-suite"
 `suite_reply_with_media`, and `suite_typing` tools.
 
 This plugin **does not expose Suite's tool surface** — tools live on the
-`/mcp` endpoint in core (see ADR 0034 in `Startup-Suite/core`). Register
+`/mcp` endpoint in core (see ADR 0034 in the `core` repository). Register
 that separately with:
 
 ```bash
@@ -39,8 +40,15 @@ Until this plugin is submitted and approved, use the development flag:
 
 1. Clone and install deps:
 
+   The repository is `claude-code-suite-channel`. Its clone URL follows the
+   GitHub organization that hosts Startup Suite; after an organization rename
+   the old URL keeps working through GitHub's redirect. `suite init` clones it
+   for you from its own configured owner (`SUITE_GITHUB_OWNER`, default
+   `Startup-Suite`), so a manual clone is only needed for development:
+
    ```bash
-   git clone https://github.com/Startup-Suite/claude-code-suite-channel.git
+   OWNER="${SUITE_GITHUB_OWNER:-Startup-Suite}"
+   git clone "https://github.com/${OWNER}/claude-code-suite-channel.git"
    cd claude-code-suite-channel
    bun install
    ```

@@ -1,6 +1,6 @@
 {
   "name": "claude-code-suite-channel",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Claude Code channels plugin for Startup Suite federation",
   "repository": {
     "type": "git",
