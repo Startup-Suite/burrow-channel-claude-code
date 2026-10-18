@@ -1,15 +1,16 @@
 {
-  "name": "claude-code-suite-channel",
-  "version": "0.3.1",
-  "description": "Claude Code channels plugin for Startup Suite federation",
+  "name": "burrow-channel-claude-code",
+  "version": "0.4.0",
+  "description": "Claude Code channels plugin for Burrow federation",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Startup-Suite/claude-code-suite-channel.git"
+    "url": "https://github.com/Startup-Suite/burrow-channel-claude-code.git"
   },
   "license": "MIT",
   "type": "module",
   "main": "src/index.ts",
   "bin": {
+    "burrow-channel-claude-code": "./src/index.ts",
     "claude-code-suite-channel": "./src/index.ts"
   },
   "scripts": {

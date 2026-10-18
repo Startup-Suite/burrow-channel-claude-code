@@ -1,8 +1,9 @@
 # Advisory CI.
 #
 # This repository has no branch protection and no required status checks
-# (GET /repos/{owner}/claude-code-suite-channel/branches/main/protection
-# returned 404 "Branch not protected" when this file was added). A red run here
+# (GET /repos/{owner}/burrow-channel-claude-code/branches/main/protection
+# returned 404 "Branch not protected" when this file was added, under the
+# repository's former name claude-code-suite-channel). A red run here
 # therefore REPORTS a failure; it does not block a merge. Turning these checks
 # into a merge gate is a repository-settings change that needs admin rights and
 # has to be done by a human in GitHub's UI. Until that happens, do not describe

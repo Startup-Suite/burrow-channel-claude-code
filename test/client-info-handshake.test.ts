@@ -149,7 +149,7 @@ describe("SuiteClient federation handshake", () => {
 
     // Still the full pre-existing handshake, unchanged.
     expect(ci.product).toBe("claude_channel");
-    expect(ci.version).toBe("0.3.1");
+    expect(ci.version).toBe("0.4.0");
   });
 
   // The exact literal, isolated from the join plumbing, so a drift in the
@@ -217,9 +217,9 @@ function probe(clientPath: string, env: Record<string, string | undefined>, comm
 }
 
 describe("SuiteClient client_info.build / started_at", () => {
-  // The test process may itself have SUITE_CHANNEL_BUILD set (the docker
-  // image sets it); these in-process cases assert the git path.
-  const envBuild = process.env.SUITE_CHANNEL_BUILD;
+  // The test process may itself have BURROW_CHANNEL_BUILD / SUITE_CHANNEL_BUILD
+  // set (the docker image sets them); these in-process cases assert the git path.
+  const envBuild = process.env.BURROW_CHANNEL_BUILD || process.env.SUITE_CHANNEL_BUILD;
 
   test("(a) build is `git rev-parse HEAD` of the plugin checkout, -dirty only when the tree is dirty", () => {
     if (envBuild) return; // resolution (a) wins; covered by test (e)
@@ -258,9 +258,9 @@ describe("SuiteClient client_info.build / started_at", () => {
     expect(second!.build).toBe(first!.build);
   });
 
-  test("(d) loaded from a copy with no .git and SUITE_CHANNEL_BUILD unset: no build, a build_error saying why", () => {
+  test("(d) loaded from a copy with no .git and both build envs unset: no build, a build_error saying why", () => {
     const clientPath = copyPlugin(join(tempDir(), "plugin"));
-    const { joins } = probe(clientPath, { SUITE_CHANNEL_BUILD: undefined });
+    const { joins } = probe(clientPath, { BURROW_CHANNEL_BUILD: undefined, SUITE_CHANNEL_BUILD: undefined });
 
     expect(joins.length).toBe(2);
     for (const ci of joins) {
@@ -272,8 +272,11 @@ describe("SuiteClient client_info.build / started_at", () => {
     }
   });
 
-  test("(e) SUITE_CHANNEL_BUILD wins over git", () => {
-    const { joins } = probe(join(REPO_ROOT, "src", "suite-client.ts"), { SUITE_CHANNEL_BUILD: "abc123" });
+  test("(e) the deprecated SUITE_CHANNEL_BUILD alone still wins over git", () => {
+    const { joins } = probe(join(REPO_ROOT, "src", "suite-client.ts"), {
+      BURROW_CHANNEL_BUILD: undefined,
+      SUITE_CHANNEL_BUILD: "abc123",
+    });
 
     expect(joins[0]!.build).toBe("abc123");
     expect("build_error" in joins[0]!).toBe(false);
@@ -287,7 +290,11 @@ describe("SuiteClient client_info.build / started_at", () => {
     git(repo, "commit", "-q", "-m", "initial");
     const loadedHead = git(repo, "rev-parse", "HEAD");
 
-    const { joins, head_after } = probe(clientPath, { SUITE_CHANNEL_BUILD: undefined }, repo);
+    const { joins, head_after } = probe(
+      clientPath,
+      { BURROW_CHANNEL_BUILD: undefined, SUITE_CHANNEL_BUILD: undefined },
+      repo,
+    );
 
     expect(head_after).not.toBe(loadedHead);
     expect(joins[0]!.build).toBe(loadedHead);
@@ -304,7 +311,7 @@ describe("SuiteClient client_info.build / started_at", () => {
     git(outer, "commit", "--allow-empty", "-q", "-m", "foreign");
     const clientPath = copyPlugin(join(outer, "vendor", "plugin"));
 
-    const { joins } = probe(clientPath, { SUITE_CHANNEL_BUILD: undefined });
+    const { joins } = probe(clientPath, { BURROW_CHANNEL_BUILD: undefined, SUITE_CHANNEL_BUILD: undefined });
 
     expect("build" in joins[0]!).toBe(false);
     expect(joins[0]!.build_error!.length).toBeGreaterThan(0);

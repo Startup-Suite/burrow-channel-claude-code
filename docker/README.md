@@ -1,11 +1,11 @@
 # Docker worker
 
-A containerized Claude Code worker that federates with a Startup Suite
+A containerized Claude Code worker that federates with a Burrow
 instance as an **autonomous execution lane**, separate from any interactive
 Claude Code session you run for chat.
 
 The container runs `claude` with `--dangerously-skip-permissions`, on the
-assumption that the plan-approval gate in Suite is the trust boundary, not
+assumption that the plan-approval gate in Burrow is the trust boundary, not
 per-action prompts. The sandbox IS the container — limit the blast radius
 by what you mount in.
 
@@ -14,7 +14,7 @@ by what you mount in.
 - Docker 24+ (Docker Desktop, OrbStack, Colima, etc.)
 - A Claude Code account signed in on the host: run `claude login` once. The
   container mounts `~/.claude/` so it inherits that session.
-- A runtime record in Suite (Agent Resources → Federation → Runtimes) linked
+- A runtime record in Burrow (Agent Resources → Federation → Runtimes) linked
   to a worker agent. You'll need the `runtime_id` + raw token it issues.
 - (Optional) `gh` CLI authenticated on the host (`gh auth login`), **or** a
   GitHub PAT set as `GH_TOKEN`.
@@ -24,15 +24,20 @@ by what you mount in.
 ```bash
 cd docker
 cp .env.example .env
-$EDITOR .env        # fill SUITE_URL, SUITE_RUNTIME_ID, SUITE_TOKEN at minimum
+$EDITOR .env        # fill BURROW_URL, BURROW_RUNTIME_ID, BURROW_TOKEN at minimum
 ```
+
+An existing `.env` written before the Burrow rename, with `SUITE_*` names
+only, keeps working: `run.sh` reads every variable as `BURROW_<NAME>` first
+and `SUITE_<NAME>` second, prints one deprecation line per fallback, and passes
+both spellings into the container. When both are set, `BURROW_*` wins.
 
 ## Run
 
 From the project you want the worker to operate on:
 
 ```bash
-/path/to/claude-code-suite-channel/docker/run.sh
+/path/to/burrow-channel-claude-code/docker/run.sh
 ```
 
 First run builds the image (once). Subsequent runs reuse it. Force a rebuild
@@ -49,7 +54,7 @@ The default mounts:
 | `~/.ssh/known_hosts` | `/root/.ssh/known_hosts` | ro   | Prevents SSH host-key prompts   |
 
 Override the workspace with `WORKER_WORKSPACE=/path/to/repo` in `.env`.
-Add extra mounts with `SUITE_WORKER_EXTRA_MOUNTS` (space-separated mount
+Add extra mounts with `BURROW_WORKER_EXTRA_MOUNTS` (space-separated mount
 specs) — useful for shared credential stores or artifact directories.
 
 ## GitHub access inside the container
@@ -65,7 +70,7 @@ Two paths:
    where you don't have a host-side gh session.
 
 SSH-based git (not recommended) requires forwarding `~/.ssh` manually with
-`SUITE_WORKER_EXTRA_MOUNTS="source=$HOME/.ssh,target=/root/.ssh,readonly"`.
+`BURROW_WORKER_EXTRA_MOUNTS="source=$HOME/.ssh,target=/root/.ssh,readonly"`.
 
 ## Debugging
 
@@ -76,7 +81,7 @@ Start a shell inside the container without launching Claude:
 ```
 
 Tail the channel plugin's WebSocket activity by running
-`bun /opt/claude-code-suite-channel/src/index.ts` inside that shell with your
+`bun /opt/burrow-channel-claude-code/src/index.ts` inside that shell with your
 env vars — the plugin logs `[suite-client] joined runtime:<id>` when
 federation connects.
 
@@ -85,15 +90,15 @@ federation connects.
 The worker runs with `--dangerously-skip-permissions`. This is the correct
 posture for an autonomous execution lane:
 
-- Trust is established at plan-approval time in Suite, not per action.
+- Trust is established at plan-approval time in Burrow, not per action.
 - Blast radius is the container's mounts — it can only touch what you
   mounted in.
 - Nothing outside the container is writable unless you added a bind mount.
 
 If you want an approval loop for a specific class of actions, disable
 `--dangerously-skip-permissions` in `docker/entrypoint.sh` and enable
-`SUITE_ALLOW_PERMISSION_RELAY=1` in `.env` — prompts will forward into the
-Suite space where the task was dispatched, and a reviewer agent or human
+`BURROW_ALLOW_PERMISSION_RELAY=1` in `.env` — prompts will forward into the
+Burrow space where the task was dispatched, and a reviewer agent or human
 can approve with `yes <id>` / `no <id>`.
 
 ## Running multiple workers
@@ -102,12 +107,12 @@ One container per runtime_id. Spin up additional workers with different
 `.env` files:
 
 ```bash
-SUITE_WORKER_ENV_FILE=./planner.env ./run.sh
-SUITE_WORKER_ENV_FILE=./deployer.env ./run.sh
+BURROW_WORKER_ENV_FILE=./planner.env ./run.sh
+BURROW_WORKER_ENV_FILE=./deployer.env ./run.sh
 ```
 
 Each gets a unique container name (`suite-worker-<runtime_id>`) and its own
-federation identity, so Suite's task router dispatches to the right one.
+federation identity, so Burrow's task router dispatches to the right one.
 
 ## Shutting down
 
