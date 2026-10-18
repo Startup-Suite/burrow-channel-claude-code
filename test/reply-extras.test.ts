@@ -4,7 +4,7 @@
 // forward two optional fields to core: `in_reply_to_message_id` and
 // `context`. The non-final chunk and the `reply_chunk` push never carry them.
 //
-// Two layers are pinned: the tool dispatcher (which Suite call receives the
+// Two layers are pinned: the tool dispatcher (which Burrow call receives the
 // extras) and the SuiteClient (what lands in the wire payload). The
 // no-extras cases are the positive controls for omission: a client that
 // always wrote `context: undefined` into the payload would fail them.

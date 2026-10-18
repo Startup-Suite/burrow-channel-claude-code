@@ -1,7 +1,7 @@
 // Non-final chunk result tests (task 01a0ac1d, stage 2).
 //
 // `suite_reply_chunk` with done:false returned "chunk … appended" with no
-// isError, unconditionally — even for a space Suite had already refused. The
+// isError, unconditionally — even for a space Burrow had already refused. The
 // result is now built by `partialChunkResult` (src/chunk-result.ts), which
 // index.ts calls with `suite.lastChunkRefusal(space_id)`. These tests import
 // that production function; they do NOT re-implement the branch locally.

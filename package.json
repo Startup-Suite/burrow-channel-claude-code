@@ -1,6 +1,6 @@
 {
   "name": "burrow-channel-claude-code",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Claude Code channels plugin for Burrow federation",
   "repository": {
     "type": "git",

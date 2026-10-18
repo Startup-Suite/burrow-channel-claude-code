@@ -135,14 +135,14 @@ describe("sendReply awaits the server ack", () => {
   test("a null channel rejects rather than resolving", async () => {
     const client: any = makeClient();
     expect(client.channel).toBeNull();
-    await expect(client.sendReply(SPACE, "hello")).rejects.toThrow(/not connected to Suite/);
+    await expect(client.sendReply(SPACE, "hello")).rejects.toThrow(/not connected to Burrow/);
   });
 
   test("an existing-but-unjoined channel also rejects", async () => {
     const client: any = makeClient();
     client.connect();
     expect(client.channel).not.toBeNull();
-    await expect(client.sendReply(SPACE, "hello")).rejects.toThrow(/not connected to Suite/);
+    await expect(client.sendReply(SPACE, "hello")).rejects.toThrow(/not connected to Burrow/);
     client.disconnect();
   });
 });

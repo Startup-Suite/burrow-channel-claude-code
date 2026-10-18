@@ -7,11 +7,11 @@ import { BUILD, BUILD_ERROR, PROCESS_STARTED_AT } from "./build-identity.ts";
 import { normaliseFrame } from "./meeting-transcript.ts";
 import type { MeetingTranscriptFrame } from "./meeting-transcript.ts";
 
-// Federation handshake: declare what client product is connecting so the Suite
+// Federation handshake: declare what client product is connecting so the Burrow
 // dispatch renderer can distinguish Claude-channel runtimes (one agent per
 // connection — dispatch should suggest spawning a subagent for parallelism)
 // from OpenClaw runtimes (which can host many agents per connection).
-// Suite-side treats missing client_info as "unknown" (forward compatible).
+// Burrow-side treats missing client_info as "unknown" (forward compatible).
 //
 // ── `build` / `build_error` / `started_at` ─────────────────────────────────
 //
@@ -30,7 +30,7 @@ import type { MeetingTranscriptFrame } from "./meeting-transcript.ts";
 // ── `features` ─────────────────────────────────────────────────────────────
 //
 // A declared capability set: what THIS build can do, not what version it calls
-// itself. Suite persists it on the runtime row (`runtime_channel.ex`
+// itself. Burrow persists it on the runtime row (`runtime_channel.ex`
 // `resolve_client_info/1`) and reads it back through
 // `AgentRuntime.client_supports?/2`.
 //
@@ -141,7 +141,7 @@ export interface AttentionPayload {
  * fix without this one would have traded blank wake-ups for dropped ones.
  *
  * Every added component can only make the key MORE unique, never less, so a
- * genuine Suite retry (byte-identical payload) still collapses exactly as
+ * genuine Burrow retry (byte-identical payload) still collapses exactly as
  * before. Dedupe erring open is the safe direction: a duplicate wake-up is
  * visible and annoying, a dropped dispatch is silent.
  */
@@ -222,7 +222,7 @@ export interface ReplyOk {
 /**
  * Optional annotations on a `reply` / `reply_with_media` push (task 01a0d8de).
  *
- *   - `in_reply_to_message_id`: the Suite message this reply answers.
+ *   - `in_reply_to_message_id`: the Burrow message this reply answers.
  *   - `context`: one agent-written line saying what the reply answers.
  *
  * Both are validated by core and DROPPED (reported in the ack's `dropped`
@@ -252,7 +252,7 @@ function log(msg: string): void {
 }
 
 /**
- * Phoenix WebSocket client for a Suite runtime connection. Adapted from
+ * Phoenix WebSocket client for a Burrow runtime connection. Adapted from
  * startup-suite-channel (the OpenClaw plugin). This version is scoped down to
  * what the Claude Code channel needs: attention events in, replies / media /
  * typing / presence out. No tool surface.
@@ -392,7 +392,7 @@ export class SuiteClient {
     if (!channel || !this.channelJoined) {
       return Promise.reject(
         new Error(
-          `not connected to Suite: the runtime channel is not joined, so the reply to space ${spaceId} was not delivered`,
+          `not connected to Burrow: the runtime channel is not joined, so the reply to space ${spaceId} was not delivered`,
         ),
       );
     }
@@ -407,7 +407,7 @@ export class SuiteClient {
         .receive("ok", (payload: ReplyOk) => resolve(payload ?? {}))
         .receive("error", (payload: ReplyError) => {
           const err = new Error(
-            payload?.error ?? `reply to space ${spaceId} was refused by Suite`,
+            payload?.error ?? `reply to space ${spaceId} was refused by Burrow`,
           ) as Error & { recoverable?: boolean };
           err.recoverable = payload?.recoverable ?? false;
           reject(err);
@@ -415,7 +415,7 @@ export class SuiteClient {
         .receive("timeout", () =>
           reject(
             new Error(
-              `timed out after ${PUSH_TIMEOUT_MS}ms waiting for Suite to ack the reply to space ${spaceId}`,
+              `timed out after ${PUSH_TIMEOUT_MS}ms waiting for Burrow to ack the reply to space ${spaceId}`,
             ),
           ),
         );
@@ -444,12 +444,12 @@ export class SuiteClient {
   }
 
   /**
-   * The most recent refusal Suite gave for a typing push to this space, or
+   * The most recent refusal Burrow gave for a typing push to this space, or
    * `undefined` if the last outcome was an ack (or nothing has come back yet).
    *
    * This exists because `sendTyping` is deliberately fire-and-forget: the tool
    * layer returns before any ack arrives, so it cannot report THIS call's
-   * outcome. It can, however, report a refusal Suite has ALREADY given for the
+   * outcome. It can, however, report a refusal Burrow has ALREADY given for the
    * same space — which is what turns "typing on" from an unconditional
    * affirmative into a claim with a source. Cleared on the first ack, so a
    * space that recovers stops reporting a stale refusal.
@@ -465,7 +465,7 @@ export class SuiteClient {
    * await its ack, so a dropped chunk degrades the reveal and never the
    * message. Nothing is awaited, so a non-final chunk never blocks. The
    * refusal is logged AND recorded per-space (see `lastChunkRefusal`), so the
-   * tool layer can stop reporting "appended" for a space Suite has already
+   * tool layer can stop reporting "appended" for a space Burrow has already
    * refused.
    */
   sendReplyChunk(spaceId: string, chunkId: string, text: string, done: boolean): void {
@@ -487,13 +487,13 @@ export class SuiteClient {
   }
 
   /**
-   * The most recent refusal Suite gave for a reply_chunk push to this space,
+   * The most recent refusal Burrow gave for a reply_chunk push to this space,
    * or `undefined` if the last outcome was an ack (or nothing has come back
    * yet).
    *
    * This exists because `sendReplyChunk` is deliberately fire-and-forget: the
    * tool layer returns before any ack arrives, so it cannot report THIS
-   * chunk's outcome. It can, however, report a refusal Suite has ALREADY
+   * chunk's outcome. It can, however, report a refusal Burrow has ALREADY
    * given for the same space — which is what turns "chunk appended" from an
    * unconditional affirmative into a claim with a source. Cleared on the
    * first ack, so a space that recovers stops reporting a stale refusal.
@@ -518,7 +518,7 @@ export class SuiteClient {
     if (!channel || !this.channelJoined) {
       return Promise.reject(
         new Error(
-          `not connected to Suite: the runtime channel is not joined, so the reply to space ${spaceId} was not delivered`,
+          `not connected to Burrow: the runtime channel is not joined, so the reply to space ${spaceId} was not delivered`,
         ),
       );
     }
@@ -540,7 +540,7 @@ export class SuiteClient {
         .receive("ok", (ok: ReplyOk) => resolve(ok ?? {}))
         .receive("error", (err: ReplyError) => {
           const error = new Error(
-            err?.error ?? `reply to space ${spaceId} was refused by Suite`,
+            err?.error ?? `reply to space ${spaceId} was refused by Burrow`,
           ) as Error & { recoverable?: boolean };
           error.recoverable = err?.recoverable ?? false;
           reject(error);
@@ -548,7 +548,7 @@ export class SuiteClient {
         .receive("timeout", () =>
           reject(
             new Error(
-              `timed out after ${PUSH_TIMEOUT_MS}ms waiting for Suite to ack the reply to space ${spaceId}`,
+              `timed out after ${PUSH_TIMEOUT_MS}ms waiting for Burrow to ack the reply to space ${spaceId}`,
             ),
           ),
         );
@@ -628,8 +628,8 @@ export class SuiteClient {
       this.channel?.push("pong", { timestamp: new Date().toISOString() });
     });
 
-    // Optional: Suite may deliver remote verdicts via a dedicated event.
-    // Kept here so the channel is ready to consume if/when Suite adds it.
+    // Optional: Burrow may deliver remote verdicts via a dedicated event.
+    // Kept here so the channel is ready to consume if/when Burrow adds it.
     this.channel.on("permission_verdict", (payload: PermissionVerdict) => {
       this.handlers.onPermissionVerdict?.(payload);
     });

@@ -2,7 +2,7 @@ import type { AttentionPayload } from "./suite-client.ts";
 
 // ── History injection ──────────────────────────────────────────────────────
 //
-// Suite's chat-driven attention events carry a `history` array of prior turns
+// Burrow's chat-driven attention events carry a `history` array of prior turns
 // in the space (see `core:apps/platform/lib/platform/chat/agent_responder.ex §
 // build_history/3`, whose result is attached to the chat-path signal).
 // Task-router dispatches leave it empty — they pass context via the `context`
@@ -49,7 +49,7 @@ export interface EmitAttentionOptions {
   setActivePermissionSpace?: (spaceId: string) => void;
 }
 
-// Suite chat replies that match this shape are forwarded as permission
+// Burrow chat replies that match this shape are forwarded as permission
 // verdicts instead of regular attentions.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i;
 

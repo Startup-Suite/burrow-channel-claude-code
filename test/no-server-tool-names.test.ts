@@ -1,10 +1,10 @@
-// Guard: this plugin names no dotted Suite server tool (task 01a14a7f stage 2).
+// Guard: this plugin names no dotted Burrow server tool (task 01a14a7f stage 2).
 //
-// Suite core is renaming its dotted MCP tools (`skill.list`, `canvas.create`,
+// Burrow core is renaming its dotted MCP tools (`skill.list`, `canvas.create`,
 // `attachment.upload_start`, `prototype.publish`, `feedback.submit`, ...) to
 // underscore names. This plugin is unaffected TODAY because it calls no server
 // tool by name: its only tools are the local ones it serves to Claude Code
-// (src/tools.ts), carried to Suite as runtime-socket events (reply, typing,
+// (src/tools.ts), carried to Burrow as runtime-socket events (reply, typing,
 // reply_chunk, reply_with_media, meeting_transcript_ack, pong), never as
 // `tool_call` frames. Claude Code reaches core's tools over HTTP /mcp and takes
 // their names from the live tools/list.
