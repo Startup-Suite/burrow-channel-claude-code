@@ -4,7 +4,7 @@
  *
  * Extracted from index.ts (which cannot be imported in a test because it
  * starts the MCP stdio server) so the tests exercise the production dispatch,
- * including which Suite pushes carry the optional reply annotations.
+ * including which Burrow pushes carry the optional reply annotations.
  */
 import { z } from "zod";
 
@@ -32,7 +32,7 @@ export type ToolResult = { content: Array<{ type: "text"; text: string }>; isErr
 // ── Optional reply annotations (task 01a0d8de) ─────────────────────────────
 
 const IN_REPLY_TO_DESCRIPTION =
-  "Optional. The message_id attribute of the channel tag you are answering. Suite links your reply to that message.";
+  "Optional. The message_id attribute of the channel tag you are answering. Burrow links your reply to that message.";
 
 const CONTEXT_DESCRIPTION =
   "Optional. One line, at most 200 characters, saying what this reply answers in words a person arriving hours later can follow; name the task, stage or item instead of writing '6'.";
@@ -60,7 +60,7 @@ export const REPLY_EXTRAS_INSTRUCTION =
 // ── Schemas ────────────────────────────────────────────────────────────────
 
 export const REPLY_SCHEMA = z.object({
-  space_id: z.string().describe("UUID of the Suite space to reply in (from the inbound channel tag)"),
+  space_id: z.string().describe("UUID of the Burrow space to reply in (from the inbound channel tag)"),
   content: z.string().describe("Reply body (markdown)"),
   ...REPLY_EXTRAS_SHAPE,
 });
@@ -90,12 +90,12 @@ export const REPLY_CHUNK_SCHEMA = z.object({
   chunk_id: z
     .string()
     .describe(
-      "Stable identifier shared across all chunks of one reply — Suite appends chunks with the same id to a single message. Generate it once at the start of a chunked reply and reuse it for each chunk.",
+      "Stable identifier shared across all chunks of one reply — Burrow appends chunks with the same id to a single message. Generate it once at the start of a chunked reply and reuse it for each chunk.",
     ),
-  text: z.string().describe("Cumulative reply text so far (not delta). Suite replaces the in-flight message with this text on every chunk."),
+  text: z.string().describe("Cumulative reply text so far (not delta). Burrow replaces the in-flight message with this text on every chunk."),
   done: z
     .boolean()
-    .describe("Set to true on the final chunk of the reply so Suite finalizes the message. Set to false while more chunks are coming."),
+    .describe("Set to true on the final chunk of the reply so Burrow finalizes the message. Set to false while more chunks are coming."),
   ...REPLY_EXTRAS_SHAPE,
 });
 
@@ -105,7 +105,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "suite_reply",
     description:
-      "Send a text reply into a Startup Suite space. Use this to answer a message that arrived via the channel. Pass the space_id attribute from the inbound <channel> tag.",
+      "Send a text reply into a Burrow space. Use this to answer a message that arrived via the channel. Pass the space_id attribute from the inbound <channel> tag.",
     inputSchema: {
       type: "object",
       properties: {
@@ -146,7 +146,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "suite_typing",
     description:
-      "Toggle a typing indicator in the Suite space so humans can see that a reply is being composed.",
+      "Toggle a typing indicator in the Burrow space so humans can see that a reply is being composed.",
     inputSchema: {
       type: "object",
       properties: {
@@ -159,7 +159,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "suite_reply_chunk",
     description:
-      "Send a partial reply chunk to a Suite space, appearing to the human as a progressively-revealed message. Use this for long or multi-step replies: call it several times in a row with the same chunk_id, passing the cumulative text each call. Set done:true on the last call. Prefer suite_reply for short replies where progressive reveal adds no value. in_reply_to_message_id and context are stored from the done:true call.",
+      "Send a partial reply chunk to a Burrow space, appearing to the human as a progressively-revealed message. Use this for long or multi-step replies: call it several times in a row with the same chunk_id, passing the cumulative text each call. Set done:true on the last call. Prefer suite_reply for short replies where progressive reveal adds no value. in_reply_to_message_id and context are stored from the done:true call.",
     inputSchema: {
       type: "object",
       properties: {
@@ -251,7 +251,7 @@ export async function callTool(suite: ToolSuite, name: string, args: unknown): P
       // The reply_chunk push itself carries no annotations: it is an
       // ephemeral broadcast with no persisted row to annotate.
       suite.sendReplyChunk(space_id, chunk_id, text, done);
-      // Suite's reply_chunk is ephemeral (PubSub broadcast only). On the final
+      // Burrow's reply_chunk is ephemeral (PubSub broadcast only). On the final
       // chunk we also fire a regular reply so the message persists to the DB
       // and shows up in space history.
       if (done) {

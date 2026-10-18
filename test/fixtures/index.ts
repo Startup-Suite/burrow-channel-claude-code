@@ -1,8 +1,8 @@
 /**
- * Captured `system_event` envelopes, as the Suite server actually emits them.
+ * Captured `system_event` envelopes, as the Burrow server actually emits them.
  *
  * PROVENANCE. Both JSON files are verbatim captures from live production
- * dispatches, filed on Suite task `019fa618-c860-7f4d-9e00-4519a6aca5bd` by
+ * dispatches, filed on Burrow task `019fa618-c860-7f4d-9e00-4519a6aca5bd` by
  * task `019fa510` stage 6. They are wire payloads, not hand-written
  * approximations — that is the entire point of the fixture, and it is why the
  * JSON files carry no comments, no reformatting and no key reordering.

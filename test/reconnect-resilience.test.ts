@@ -1,7 +1,7 @@
 // Reconnect-resilience tests (channel hardening, 2026-06-11).
 //
 // Background: on 2026-06-10 the live channel went deaf for ~2 days — the
-// websocket to Suite died but the plugin process stayed up, outbound MCP
+// websocket to Burrow died but the plugin process stayed up, outbound MCP
 // tools kept working, and inbound attention events silently stopped. The
 // gaps: a rejected/timed-out channel join was logged once and never retried,
 // and socket errors without a matching close event never re-entered the

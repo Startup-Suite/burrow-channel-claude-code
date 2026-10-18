@@ -3,7 +3,7 @@
 //
 // Verifies that the SuiteClient's runtime channel join passes
 // `client_info: { product: "claude_channel", version: <truthy>,
-// features: ["system_event_prompt"] }` so the Suite dispatch renderer can
+// features: ["system_event_prompt"] }` so the Burrow dispatch renderer can
 // distinguish Claude-channel runtimes (single-agent per connection) from
 // OpenClaw runtimes (multi-agent per connection), AND so the server can tell
 // a build that reads `signal.prompt` from one that does not.
@@ -149,7 +149,7 @@ describe("SuiteClient federation handshake", () => {
 
     // Still the full pre-existing handshake, unchanged.
     expect(ci.product).toBe("claude_channel");
-    expect(ci.version).toBe("0.4.0");
+    expect(ci.version).toBe("0.4.1");
   });
 
   // The exact literal, isolated from the join plumbing, so a drift in the

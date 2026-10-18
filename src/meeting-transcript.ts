@@ -17,7 +17,7 @@ import type { AttentionNotification, NotifyFn } from "./attention.ts";
 // This module does NOT reply, call any tool, or touch the attention/intent
 // path. It delivers the segment to the session as an inbound channel message
 // — the same notification the space-message path in `attention.ts` uses — and
-// the agent decides whether to speak (via `meeting_say` on the hosted Suite
+// the agent decides whether to speak (via `meeting_say` on the hosted Burrow
 // MCP server). Core enforces the reply budget.
 
 export interface MeetingTranscriptFrame {

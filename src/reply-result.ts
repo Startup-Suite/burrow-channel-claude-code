@@ -40,5 +40,5 @@ export async function replyResult(
 function droppedSuffix(dropped: DroppedField[] | undefined): string {
   if (!Array.isArray(dropped) || dropped.length === 0) return "";
   const parts = dropped.map((d) => `${d?.field ?? "unknown"} (${d?.reason ?? "unknown"})`);
-  return `; Suite posted the message but did not store: ${parts.join(", ")}`;
+  return `; Burrow posted the message but did not store: ${parts.join(", ")}`;
 }

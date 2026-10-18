@@ -151,7 +151,7 @@ describe("sendReplyWithMedia awaits the server ack", () => {
     const { client } = joinedClient();
     client.channel = null;
     await expect(client.sendReplyWithMedia(SPACE, "hi", attachments)).rejects.toThrow(
-      /not connected to Suite/,
+      /not connected to Burrow/,
     );
   });
 });

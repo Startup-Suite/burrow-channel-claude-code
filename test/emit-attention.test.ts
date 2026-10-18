@@ -1,6 +1,6 @@
 // Per-space history injection contract test.
 //
-// Suite chat-driven attentions carry a `history` array (see
+// Burrow chat-driven attentions carry a `history` array (see
 // `core/apps/platform/lib/platform/chat/agent_responder.ex:247`). The channel
 // plugin used to drop it on the floor; this test pins the new behavior:
 // inject history into the FIRST attention per space (this process lifetime),
@@ -558,7 +558,7 @@ describe("emitAttention — against core's build_system_event_signal/2", () => {
 
     // Shape of the 2026-07-27T19:57:21Z architecture.review_plan dispatch:
     // 16,070 bytes of rendered prompt, correlation ids in metadata only.
-    const prompt = "You are the Architect on the Suite plan-review path…";
+    const prompt = "You are the Architect on the Burrow plan-review path…";
     await emit({
       signal: {
         reason: "system_event",

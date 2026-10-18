@@ -1,7 +1,7 @@
 // Dedupe-key contract.
 //
 // `SuiteClient` collapses attentions whose identity repeats inside a ~1s
-// bucket, because Suite retries delivery. The old identity was
+// bucket, because Burrow retries delivery. The old identity was
 // `space_id:message_id`, and a responsibility dispatch has NEITHER — no
 // `space_id` in `build_system_event_signal/2`, and `message_id` is chat-only.
 // So every system_event degraded to the same empty string and any two landing
@@ -72,7 +72,7 @@ describe("attentionIdentity — responsibility dispatches", () => {
     expect(attentionIdentity(a)).not.toBe(attentionIdentity(b));
   });
 
-  // The whole reason dedupe exists: Suite redelivering the same event.
+  // The whole reason dedupe exists: Burrow redelivering the same event.
   test("a byte-identical redelivery still collapses", () => {
     const first = systemEvent({ metadata: { task_id: "task-1" } });
     const retry = systemEvent({ metadata: { task_id: "task-1" } });

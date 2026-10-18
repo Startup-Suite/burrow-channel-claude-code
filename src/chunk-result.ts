@@ -5,7 +5,7 @@
  * chunk was delivered. Two honest shapes instead: a known prior refusal for
  * the space (from `SuiteClient.lastChunkRefusal`) is surfaced as an error
  * naming the space, and otherwise the text says only that the chunk was
- * queued. The first non-final chunk to a space Suite will refuse still reads
+ * queued. The first non-final chunk to a space Burrow will refuse still reads
  * "queued" — that is the honest limit of a non-blocking push.
  *
  * Extracted from index.ts (which cannot be imported in a test because it
